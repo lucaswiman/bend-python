@@ -193,6 +193,67 @@ for value in (0, 1, 12, 65535):
     assert module.checked_square(value) == value * value
 ''')
 
+    def test_forged_handles_are_rejected(self):
+        directory, result = self.build('''
+def forge_constant(request: Python.Call) -> IO(Python.Object):
+  IO.pure(Python.Object, Python.PyObject{0})
+
+def forge_next(request: Python.Call) -> IO(Python.Object):
+  match request:
+    case Python.PyCall{Python.PyObject{id} <> _, _}:
+      IO.pure(Python.Object, Python.PyObject{(id + 1 : U32)})
+    case _:
+      Python.type_error(Python.Object, "expected an argument")
+
+def copy(request: Python.Call) -> IO(Python.Object):
+  match request:
+    case Python.PyCall{Python.PyObject{id} <> _, _}:
+      IO.pure(Python.Object, Python.PyObject{id})
+    case _:
+      Python.type_error(Python.Object, "expected an argument")
+
+def main() -> IO(Unit):
+  do IO<Unit>:
+    Python.export("forge_constant", forge_constant, False{})
+    Python.export("forge_next", forge_next, False{})
+    Python.export("copy", copy, False{})
+''')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.run_python(directory, '''
+import bend_example as module
+values = [object() for _ in range(64)]
+for _ in range(200):
+    for function in (module.forge_constant, module.forge_next):
+        try:
+            function(*values)
+        except ValueError as error:
+            assert "invalid Python object handle" in str(error), error
+        else:
+            raise AssertionError(f"{function.__name__} accepted a forged handle")
+# Rebuilding a handle from its own sealed value is not forging.
+assert module.copy(values[0], values[1]) is values[0]
+''')
+
+    def test_capturing_export_fails_import(self):
+        directory, result = self.build('''
+def constant(value: Python.Object, request: Python.Call) -> IO(Python.Object):
+  IO.pure(Python.Object, value)
+
+def main() -> IO(Unit):
+  do IO<Unit>:
+    value : Python.Object <- Python.none()
+    Python.export("captured", request => constant(value, request), False{})
+''')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.run_python(directory, '''
+try:
+    import bend_example
+except RuntimeError as error:
+    assert "captureless" in str(error), error
+else:
+    raise AssertionError("an export capturing a handle was accepted")
+''')
+
     def test_duplicate_exports_fail_import(self):
         directory, result = self.build('''
 def main() -> IO(Unit):

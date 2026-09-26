@@ -28,6 +28,9 @@ static _Thread_local BpRuntime* bp_current;
 // BENDPY_RUNTIME_CONTEXT_END
 // The build includes Python.h before the runtime's standard headers.
 #include <Python.h>
+#include <stdatomic.h>
+#include <sys/random.h>
+#include <time.h>
 
 #if BANGS
 #error "GPU entry points are not supported by this embedding."
@@ -63,6 +66,7 @@ typedef struct {
   size_t text_length;
   BpValue result_kind;
   u64 result;
+  u64 key;
   bool release_gil, pending, done;
   char error[256];
 } BpCall;
@@ -70,6 +74,9 @@ typedef struct {
 static pthread_mutex_t bp_pool_mutex = PTHREAD_MUTEX_INITIALIZER;
 static BpRuntime* bp_idle;
 static size_t bp_idle_count;
+static pthread_once_t bp_secret_once = PTHREAD_ONCE_INIT;
+static u64 bp_secret;
+static _Atomic u64 bp_call_counter;
 #define BP_IDLE_LIMIT 8
 #define BP_STACK_BYTES (1ull << 31)
 #define BP_STACK_GUARD 16384
@@ -194,10 +201,52 @@ static void bp_read_list(Env e, Term list, BpCall* call, bool string) {
   if (string) call->text_length = length; else call->length = length;
 }
 
+// Handles are sealed: a Bend Object holds its arena index encrypted by a
+// 32-bit Feistel permutation under a fresh per-invocation key. Bend code has
+// no private constructors, so it could otherwise build PyObject{n} or do
+// arithmetic on an id and silently alias another object of the same call.
+// A made-up handle now opens to an in-range index with probability at most
+// count / 2^32, and the first rejected handle aborts the invocation.
+static u64 bp_mix(u64 x) {
+  x ^= x >> 30; x *= 0xbf58476d1ce4e5b9ull;
+  x ^= x >> 27; x *= 0x94d049bb133111ebull;
+  return x ^ (x >> 31);
+}
+
+static void bp_seed_secret(void) {
+  if (getrandom(&bp_secret, sizeof(bp_secret), 0) != sizeof(bp_secret))
+    bp_secret = bp_mix((u64)time(NULL) ^ (u64)(uintptr_t)&bp_secret);
+}
+
+static u64 bp_call_key(void) {
+  pthread_once(&bp_secret_once, bp_seed_secret);
+  return bp_mix(bp_secret + bp_mix(atomic_fetch_add(&bp_call_counter, 1) + 1));
+}
+
+static u32 bp_round(u64 key, u32 round, u32 half) {
+  return (u32)bp_mix(key ^ ((u64)round << 16 | half)) & 0xffff;
+}
+
+static u32 bp_seal(u64 key, u32 index) {
+  u32 l = index >> 16, r = index & 0xffff;
+  for (u32 i = 0; i < 4; ++i) { u32 t = l ^ bp_round(key, i, r); l = r; r = t; }
+  return l << 16 | r;
+}
+
+static u32 bp_open(u64 key, u32 handle) {
+  u32 l = handle >> 16, r = handle & 0xffff;
+  for (u32 i = 4; i-- > 0;) { u32 t = r ^ bp_round(key, i, l); r = l; l = t; }
+  return l << 16 | r;
+}
+
+static Term bp_object(BpCall* call, u64 index) {
+  return term_pak(CID(PyObject), bp_seal(call->key, (u32)index));
+}
+
 static Term bp_pack(Env e, BpCall* call) {
   switch (call->result_kind) {
     case BP_UNIT: return term_pak(CID(Unit), 0);
-    case BP_OBJECT: return term_pak(CID(PyObject), call->result);
+    case BP_OBJECT: return bp_object(call, call->result);
     case BP_BOOL: return term_pak(call->result ? CID(True) : CID(False), 0);
     case BP_STRING: {
       Term text = term_pak(CID(SNil), 0);
@@ -321,8 +370,8 @@ static bool bp_native(BpCall* call, BpOperation operation) {
       case BP_START: {
         Term args = term_pak(CID(Nil), 0);
         for (size_t i = call->nargs; i > 0; --i)
-          args = io_node(e, CID(Con), term_pak(CID(PyObject), i - 1), args);
-        Term input = io_node(e, CID(PyCall), args, term_pak(CID(PyObject), call->nargs));
+          args = io_node(e, CID(Con), bp_object(call, i - 1), args);
+        Term input = io_node(e, CID(PyCall), args, bp_object(call, call->nargs));
         call->continuation = bp_apply(e, call->function, input);
         call->argument = term_clo(FID_IO_EMIT, 0);
         break;
@@ -363,11 +412,14 @@ static bool bp_native(BpCall* call, BpOperation operation) {
 }
 
 // Each invocation owns a reference arena. Handles never contain PyObject*
-// addresses. Check them before access, and release the arena outside evaluation.
-static PyObject* bp_get(BpCall* call, u64 index) {
+// addresses. Open and check them before access, and release the arena outside
+// evaluation.
+static PyObject* bp_get(BpCall* call, u64 handle) {
   bp_assert_attached();
+  u32 index = bp_open(call->key, (u32)handle);
   if (index >= call->count) {
-    PyErr_SetString(PyExc_ValueError, "invalid Python object handle");
+    PyErr_SetString(PyExc_ValueError,
+      "invalid Python object handle: handles must come from the bridge in this call");
     return NULL;
   }
   return call->objects[index];
@@ -612,6 +664,7 @@ static bool bp_effect(BpCall* call) {
 }
 
 static PyObject* bp_run(BpCall* call, BpOperation start) {
+  call->key = bp_call_key();
   call->runtime = bp_runtime_acquire();
   bool ok = call->runtime != NULL && bp_native(call, start);
   while (ok && !call->done) {
