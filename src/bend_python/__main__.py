@@ -14,7 +14,9 @@ def main():
     commands.add_parser("include", help="print the installed Bend library directory")
     args = parser.parse_args()
     try:
-        result = vendor(args.directory, force=args.force) if args.command == "vendor" else get_include()
+        result = (
+            vendor(args.directory, force=args.force) if args.command == "vendor" else get_include()
+        )
     except (OSError, RuntimeError) as error:
         parser.exit(1, f"bend-python: {error}\n")
     print(result)

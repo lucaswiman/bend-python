@@ -77,6 +77,23 @@ def from_nat(value: Nat) -> IO(Object):
 def type_error(-A: Type, message: String) -> IO(A):
   import "./python.c"
 
+# Python truthiness (bool(value)), including __bool__ and __len__.
+def truthy(value: Object) -> IO(Bool):
+  import "./python.c"
+
+# Bytes of any C-contiguous buffer (bytes, bytearray, memoryview, ...), each a
+# U32 in range(256).
+def to_bytes(value: Object) -> IO(List<U32>):
+  import "./python.c"
+
+# A bytes object; a value outside range(256) raises ValueError.
+def from_bytes(values: List<U32>) -> IO(Object):
+  import "./python.c"
+
+# importlib.import_module(name), e.g. "operator" or "collections.abc".
+def import_module(name: String) -> IO(Object):
+  import "./python.c"
+
 # Common Python operations are assembled here from the small effect boundary.
 def invoke(function: Object, args: List<Object>) -> IO(Object):
   do IO<Object>:

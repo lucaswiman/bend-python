@@ -122,6 +122,72 @@ def invoke(request: Python.Call) -> IO(Python.Object):
     case _:
       Python.type_error(Python.Object, "expected a callable as the first argument")
 
+# Five positional arguments: a larger match than the other examples, so CI
+# compiles a wide segment signature with every supported Clang.
+def reverse5(request: Python.Call) -> IO(Python.Object):
+  match request:
+    case Python.PyCall{[a, b, c, d, e], keywords}:
+      do IO<Python.Object>:
+        Python.require_no_kwargs(keywords)
+        Python.tuple([e, d, c, b, a])
+    case _:
+      Python.type_error(Python.Object, "expected exactly five positional arguments")
+
+def truth(request: Python.Call) -> IO(Python.Object):
+  do IO<Python.Object>:
+    value : Python.Object <- Python.unary(request)
+    result : Bool <- Python.truthy(value)
+    Python.from_bool(result)
+
+def load_values(value: Python.Object) -> IO(Python.Object):
+  do IO<Python.Object>:
+    name : String <- Python.to_string(value)
+    Python.import_module(name)
+
+def load(request: Python.Call) -> IO(Python.Object):
+  do IO<Python.Object>:
+    value : Python.Object <- Python.unary(request)
+    load_values(value)
+
+# A modular sum of bytes; LAWS.bend proves it splits over concatenation.
+def checksum_value(value: Python.Object) -> IO(Python.Object):
+  do IO<Python.Object>:
+    data : List<U32> <- Python.to_bytes(value)
+    Python.from_u32(Arithmetic.sum(data, 0))
+
+def checksum(request: Python.Call) -> IO(Python.Object):
+  do IO<Python.Object>:
+    value : Python.Object <- Python.unary(request)
+    checksum_value(value)
+
+def reversed_bytes_value(value: Python.Object) -> IO(Python.Object):
+  do IO<Python.Object>:
+    data : List<U32> <- Python.to_bytes(value)
+    Python.from_bytes(List.reverse(&1, U32, data))
+
+def reversed_bytes(request: Python.Call) -> IO(Python.Object):
+  do IO<Python.Object>:
+    value : Python.Object <- Python.unary(request)
+    reversed_bytes_value(value)
+
+def words(args: List<Python.Object>) -> IO(List<U32>):
+  match args:
+    case []:
+      IO.pure(List<U32>, [])
+    case head <> tail:
+      do IO<List<U32>>:
+        word : U32 <- Python.to_u32(head)
+        rest : List<U32> <- words(tail)
+        return word <> rest
+
+def make_bytes(request: Python.Call) -> IO(Python.Object):
+  match request:
+    case Python.PyCall{args, keywords}:
+      do IO<Python.Object>:
+        Python.require_no_kwargs(keywords)
+        data : List<U32> <- words(args)
+        Python.from_bytes(data)
+
 def main() -> IO(Unit):
   do IO<Unit>:
     Python.export_u32(~(x => Arithmetic.square(x)), "square", False{})
@@ -146,3 +212,9 @@ def main() -> IO(Unit):
     Python.export("make_none", make_none, False{})
     Python.export("make_dict", make_dict, False{})
     Python.export("invoke", invoke, False{})
+    Python.export("reverse5", reverse5, False{})
+    Python.export("truth", truth, False{})
+    Python.export("load", load, False{})
+    Python.export("checksum", checksum, True{})
+    Python.export("reversed_bytes", reversed_bytes, True{})
+    Python.export("make_bytes", make_bytes, False{})

@@ -5,12 +5,47 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "bend-python"
 version = "0.1.0"
-description = "Bend-first native Python extensions and build helpers"
+description = "Write CPython extensions in Bend 2, with laws proved at build time"
 readme = "README.md"
 requires-python = ">=3.10"
+authors = [{ name = "Lucas Wiman" }]
+keywords = ["bend", "extension", "native", "setuptools", "proof", "dependent types"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: Setuptools Plugin",
+    "Intended Audience :: Developers",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: C",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: Free Threading :: 2 - Beta",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Software Development :: Build Tools",
+    "Topic :: Software Development :: Compilers",
+]
+
+[project.urls]
+Homepage = "https://github.com/lucaswiman/bend-python"
+Source = "https://github.com/lucaswiman/bend-python"
+Issues = "https://github.com/lucaswiman/bend-python/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
 bend_python = ["lib/*.bend", "lib/*.c"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+
+[tool.ruff.lint.isort]
+force-sort-within-sections = true

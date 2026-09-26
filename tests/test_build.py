@@ -10,14 +10,13 @@ import threading
 import unittest
 import unittest.mock
 
-
 ROOT = Path(__file__).resolve().parents[1]
 BEND = os.environ.get("BEND", str(ROOT / ".tools/bend/bin/bend"))
 
 # Only temporary test extensions contain this rendezvous. It stops the first
 # evaluator entry until a second independent call enters, even on one CPU.
 # A serializing runtime times out instead of making this a timing/speedup test.
-NATIVE_RENDEZVOUS = r'''
+NATIVE_RENDEZVOUS = r"""
 #include <errno.h>
 #include <time.h>
 
@@ -66,9 +65,9 @@ __attribute__((visibility("default"))) unsigned bp_test_status(void) {
   pthread_mutex_unlock(&bp_test_mutex);
   return result;
 }
-'''
+"""
 
-RENDEZVOUS_SETUP = '''
+RENDEZVOUS_SETUP = """
 import ctypes
 from concurrent.futures import ThreadPoolExecutor
 import bend_example as module
@@ -78,12 +77,19 @@ probe.bp_test_arm.restype = None
 probe.bp_test_status.argtypes = []
 probe.bp_test_status.restype = ctypes.c_uint
 probe.bp_test_arm()
-'''
+"""
 
 
 class BuildTests(unittest.TestCase):
-    def build(self, module=None, break_proof=False, omit_thread_proof=False,
-              native_rendezvous=False, break_vendored_library=False):
+    def build(
+        self,
+        module=None,
+        break_proof=False,
+        omit_thread_proof=False,
+        native_rendezvous=False,
+        break_vendored_library=False,
+        auto_vendor=False,
+    ):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         directory = Path(temporary.name)
@@ -91,11 +97,14 @@ class BuildTests(unittest.TestCase):
         for name in ("bend", "src"):
             shutil.copytree(ROOT / name, directory / name, ignore=ignored)
         # The example vendors the SDK library itself; never reuse a stale copy.
-        shutil.copytree(ROOT / "examples", directory / "examples",
-                        ignore=shutil.ignore_patterns("bend", "*.so", "__pycache__", "build"))
+        shutil.copytree(
+            ROOT / "examples",
+            directory / "examples",
+            ignore=shutil.ignore_patterns("bend", "*.so", "__pycache__", "build"),
+        )
         if module is not None:
             (directory / "examples/module.bend").write_text(
-                'import Base\nimport ./bend/python.bend as Python\n' + module
+                "import Base\nimport ./bend/python.bend as Python\n" + module
             )
         if break_proof:
             arithmetic = directory / "examples/arithmetic.bend"
@@ -108,11 +117,25 @@ class BuildTests(unittest.TestCase):
             library = directory / "examples/bend/python.bend"
             sound = "    case [value]:\n      Some{value}\n"
             self.assertEqual(library.read_text().count(sound), 1)
-            library.write_text(library.read_text().replace(sound, "    case [value]:\n      None{}\n"))
+            library.write_text(
+                library.read_text().replace(sound, "    case [value]:\n      None{}\n")
+            )
             setup = directory / "examples/setup.py"
-            setup.write_text(setup.read_text().replace(
-                'vendor(Path(__file__).parent / "bend", force=True)', 'pass  # keep the modified copy',
-            ))
+            setup.write_text(
+                setup.read_text().replace(
+                    'vendor(Path(__file__).parent / "bend", force=True)',
+                    "pass  # keep the modified copy",
+                )
+            )
+        if auto_vendor:
+            # Like a project that never ran `vendor`: the build must supply the library.
+            setup = directory / "examples/setup.py"
+            setup.write_text(
+                setup.read_text().replace(
+                    'vendor(Path(__file__).parent / "bend", force=True)',
+                    "pass  # rely on the build",
+                )
+            )
         if native_rendezvous:
             shim = directory / "bend/python.c"
             source = shim.read_text()
@@ -121,23 +144,31 @@ class BuildTests(unittest.TestCase):
             source = source.replace(marker, NATIVE_RENDEZVOUS + "\n" + marker)
             evaluator = "  return corpus_eval(e.mem, term_tsk(FID_CLO_APPLY, at));"
             self.assertEqual(source.count(evaluator), 1)
-            shim.write_text(source.replace(
-                evaluator, "  bp_test_enter(e.mem);\n" + evaluator,
-            ))
+            shim.write_text(
+                source.replace(
+                    evaluator,
+                    "  bp_test_enter(e.mem);\n" + evaluator,
+                )
+            )
         # Build the example project against this checkout's SDK sources.
         result = subprocess.run(
             [sys.executable, "setup.py", "build_ext", "--inplace"],
             cwd=directory / "examples",
             env={**os.environ, "CC": "clang", "BEND": BEND, "PYTHONPATH": str(directory / "src")},
-            text=True, capture_output=True, timeout=60,
+            text=True,
+            capture_output=True,
+            timeout=60,
         )
         return directory, result
 
     def run_python(self, directory, source):
         result = subprocess.run(
-            [sys.executable, "-X", "faulthandler", "-c", source], cwd=directory / "examples",
+            [sys.executable, "-X", "faulthandler", "-c", source],
+            cwd=directory / "examples",
             env={**os.environ, "PYTHONPATH": str(directory / "src")},
-            text=True, capture_output=True, timeout=30,
+            text=True,
+            capture_output=True,
+            timeout=30,
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
@@ -153,7 +184,9 @@ class BuildTests(unittest.TestCase):
         directory, result = self.build(break_proof=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("expected", result.stdout + result.stderr)
-        self.assertCleanBuildError(result, "Bend proof check failed: PROOF.bend (see Bend output above)")
+        self.assertCleanBuildError(
+            result, "Bend proof check failed: PROOF.bend (see Bend output above)"
+        )
         self.assertFalse(list(directory.rglob("*.so")))
 
     def test_missing_thread_proof_stops_build(self):
@@ -167,20 +200,25 @@ class BuildTests(unittest.TestCase):
         directory, result = self.build(break_vendored_library=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("singleton_roundtrip", result.stdout + result.stderr)
-        self.assertCleanBuildError(result, f"Bend proof check failed: {directory / 'examples/bend/PROOF.bend'}")
+        self.assertCleanBuildError(
+            result, f"Bend proof check failed: {directory / 'examples/bend/PROOF.bend'}"
+        )
         self.assertFalse(list(directory.rglob("*.so")))
 
     def test_ill_typed_program_stops_build(self):
-        directory, result = self.build('''
+        directory, result = self.build("""
 def main() -> IO(Unit):
   Python.export_u32(~(x => True{}), "wrong", False{})
-''')
+""")
         self.assertNotEqual(result.returncode, 0)
-        self.assertCleanBuildError(result, "Bend compilation failed: module.bend (see Bend output above)")
+        self.assertCleanBuildError(
+            result, "Bend compilation failed: module.bend (see Bend output above)"
+        )
         self.assertFalse(list(directory.rglob("*.so")))
 
     def test_native_evaluator_calls_overlap_with_distinct_contexts(self):
-        directory, result = self.build('''
+        directory, result = self.build(
+            """
 def tree(+depth: Nat, +seed: U32) -> U32:
   match depth:
     case 0n:
@@ -191,9 +229,14 @@ def tree(+depth: Nat, +seed: U32) -> U32:
 
 def main() -> IO(Unit):
   Python.export_u32(~(seed => tree(6n, seed)), "work", True{})
-''', native_rendezvous=True)
+""",
+            native_rendezvous=True,
+        )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.run_python(directory, RENDEZVOUS_SETUP + '''
+        self.run_python(
+            directory,
+            RENDEZVOUS_SETUP
+            + """
 seeds = (41, 0xfffffff9)
 with ThreadPoolExecutor(max_workers=2) as executor:
     futures = [executor.submit(module.work, seed) for seed in seeds]
@@ -202,18 +245,25 @@ with ThreadPoolExecutor(max_workers=2) as executor:
     assert [future.result() for future in futures] == expected
 status = probe.bp_test_status()
 assert status == 1, f"native overlap/context rendezvous failed: {status}"
-''')
+""",
+        )
 
     def test_native_failure_discards_only_the_failed_context(self):
-        directory, result = self.build('''
+        directory, result = self.build(
+            """
 def checked_square(+x: U32) -> U32:
   U32.from_nat(Nat.mul(U32.to_nat(x), U32.to_nat(x)))
 
 def main() -> IO(Unit):
   Python.export_u32(~(x => checked_square(x)), "checked_square", True{})
-''', native_rendezvous=True)
+""",
+            native_rendezvous=True,
+        )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.run_python(directory, RENDEZVOUS_SETUP + '''
+        self.run_python(
+            directory,
+            RENDEZVOUS_SETUP
+            + """
 def fail():
     try:
         module.checked_square(2**32 - 1)
@@ -230,10 +280,11 @@ with ThreadPoolExecutor(max_workers=2) as executor:
 assert probe.bp_test_status() == 1
 for value in (0, 1, 12, 65535):
     assert module.checked_square(value) == value * value
-''')
+""",
+        )
 
     def test_forged_handles_are_rejected(self):
-        directory, result = self.build('''
+        directory, result = self.build("""
 def forge_constant(request: Python.Call) -> IO(Python.Object):
   IO.pure(Python.Object, Python.PyObject{0})
 
@@ -256,9 +307,11 @@ def main() -> IO(Unit):
     Python.export("forge_constant", forge_constant, False{})
     Python.export("forge_next", forge_next, False{})
     Python.export("copy", copy, False{})
-''')
+""")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.run_python(directory, '''
+        self.run_python(
+            directory,
+            """
 import bend_example as module
 values = [object() for _ in range(64)]
 for _ in range(200):
@@ -271,10 +324,11 @@ for _ in range(200):
             raise AssertionError(f"{function.__name__} accepted a forged handle")
 # Rebuilding a handle from its own sealed value is not forging.
 assert module.copy(values[0], values[1]) is values[0]
-''')
+""",
+        )
 
     def test_capturing_export_fails_import(self):
-        directory, result = self.build('''
+        directory, result = self.build("""
 def constant(value: Python.Object, request: Python.Call) -> IO(Python.Object):
   IO.pure(Python.Object, value)
 
@@ -282,33 +336,49 @@ def main() -> IO(Unit):
   do IO<Unit>:
     value : Python.Object <- Python.none()
     Python.export("captured", request => constant(value, request), False{})
-''')
+""")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.run_python(directory, '''
+        self.run_python(
+            directory,
+            """
 try:
     import bend_example
 except RuntimeError as error:
     assert "captureless" in str(error), error
 else:
     raise AssertionError("an export capturing a handle was accepted")
-''')
+""",
+        )
+
+    def test_missing_library_is_vendored_and_its_proofs_run_quietly(self):
+        directory, result = self.build(auto_vendor=True)
+        output = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 0, output)
+        self.assertIn("vendoring the Bend library", output)
+        self.assertTrue((directory / "examples/bend/python.bend").is_file())
+        # The library's own proof output (e.g. its foreign-code notes) stays quiet.
+        self.assertNotIn("LAWS.singleton_accepted", output)
+        self.run_python(directory, "import bend_example\nassert bend_example.square(12) == 144\n")
 
     def test_duplicate_exports_fail_import(self):
-        directory, result = self.build('''
+        directory, result = self.build("""
 def main() -> IO(Unit):
   do IO<Unit>:
     Python.export_u32(~(x => x), "duplicate", False{})
     Python.export_u32(~(x => x), "duplicate", False{})
-''')
+""")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.run_python(directory, '''
+        self.run_python(
+            directory,
+            """
 try:
     import bend_example
 except ValueError as error:
     assert "duplicate" in str(error), error
 else:
     raise AssertionError("duplicate exports accepted")
-''')
+""",
+        )
 
 
 class RecordingCompiler:
@@ -322,12 +392,82 @@ class RecordingCompiler:
 
 
 @unittest.skipUnless(shutil.which("clang"), "requires clang")
+class CompilerDownloadTests(unittest.TestCase):
+    """The pinned compiler is fetched, verified, and cached without network access here."""
+
+    def setUp(self):
+        from bend_python import build
+
+        self.build_module = build
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        release = self.root / "release"
+        (release / "bend/bin").mkdir(parents=True)
+        executable = release / "bend/bin/bend"
+        executable.write_text("#!/bin/sh\necho 'bend 2.0.28'\n")
+        executable.chmod(0o755)
+        self.archive = self.root / "bend.tar.gz"
+        subprocess.run(["tar", "-czf", str(self.archive), "-C", str(release), "bend"], check=True)
+        import hashlib
+
+        self.digest = hashlib.sha256(self.archive.read_bytes()).hexdigest()
+        self.cache = self.root / "cache"
+        patcher = unittest.mock.patch.dict(os.environ, {"XDG_CACHE_HOME": str(self.cache)})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        os.environ.pop("BEND_PYTHON_DOWNLOAD", None)
+
+    def release(self, digest):
+        return unittest.mock.patch.object(
+            self.build_module, "BEND_RELEASE", (self.archive.as_uri(), digest)
+        )
+
+    def test_download_verifies_extracts_and_caches(self):
+        with self.release(self.digest):
+            executable = self.build_module._cached_compiler()
+        self.assertEqual(executable, self.cache / "bend-python/bend-2.0.28/bin/bend")
+        self.assertEqual(self.build_module._bend_version(str(executable)), "bend 2.0.28")
+        self.archive.unlink()  # A second lookup must not download again.
+        with self.release(self.digest):
+            self.assertEqual(self.build_module._cached_compiler(), executable)
+
+    def test_checksum_mismatch_installs_nothing(self):
+        from setuptools.errors import ExecError
+
+        with self.release("0" * 64), self.assertRaisesRegex(ExecError, "checksum mismatch"):
+            self.build_module._cached_compiler()
+        self.assertEqual(list((self.cache / "bend-python").iterdir()), [])
+
+    def test_download_can_be_disabled(self):
+        with (
+            self.release(self.digest),
+            unittest.mock.patch.dict(os.environ, {"BEND_PYTHON_DOWNLOAD": "0"}),
+        ):
+            self.assertIsNone(self.build_module._cached_compiler())
+        self.assertFalse((self.cache / "bend-python/bend-2.0.28").exists())
+
+    def test_explicit_bend_must_match_the_pinned_version(self):
+        from setuptools.errors import ExecError
+
+        wrong = self.root / "wrong-bend"
+        wrong.write_text("#!/bin/sh\necho 'bend 2.0.27'\n")
+        wrong.chmod(0o755)
+        with (
+            unittest.mock.patch.dict(os.environ, {"BEND": str(wrong)}),
+            self.assertRaisesRegex(ExecError, "2.0.27"),
+        ):
+            self.build_module._compiler()
+
+
 class ClangSwapTests(unittest.TestCase):
     def test_parallel_builds_do_not_interleave_compiler_swaps(self):
         sys.path.insert(0, str(ROOT / "src"))
         self.addCleanup(sys.path.remove, str(ROOT / "src"))
         from setuptools import Distribution
+
         from bend_python.build import BendBuildExt
+
         command = BendBuildExt(Distribution())
         command.compiler = RecordingCompiler()
         first_in, second_in, first_out = threading.Event(), threading.Event(), threading.Event()
@@ -365,6 +505,7 @@ class VendorTests(unittest.TestCase):
         sys.path.insert(0, str(ROOT / "src"))
         self.addCleanup(sys.path.remove, str(ROOT / "src"))
         from bend_python import library_path, vendor
+
         self.library, self.vendor = library_path(), vendor
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -373,7 +514,9 @@ class VendorTests(unittest.TestCase):
     def test_vendor_copies_and_accepts_identical_files(self):
         target = self.directory / "bend"
         self.assertEqual(self.vendor(target), target.resolve())
-        self.assertEqual((target / "python.c").read_bytes(), (self.library / "python.c").read_bytes())
+        self.assertEqual(
+            (target / "python.c").read_bytes(), (self.library / "python.c").read_bytes()
+        )
         (target / "unrelated.bend").write_text("kept")
         self.vendor(target)
         self.assertEqual((target / "unrelated.bend").read_text(), "kept")

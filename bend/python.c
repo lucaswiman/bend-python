@@ -49,7 +49,9 @@ typedef struct {
   PyObject* module;
 } BpFunction;
 
-typedef enum { BP_UNIT, BP_OBJECT, BP_U32, BP_F32, BP_BOOL, BP_STRING, BP_NAT } BpValue;
+typedef enum { BP_UNIT, BP_OBJECT, BP_U32, BP_F32, BP_BOOL, BP_STRING, BP_NAT, BP_BYTES } BpValue;
+// A decoded Bend list: object handles, String codepoints, or raw U32 words.
+typedef enum { BP_READ_OBJECTS, BP_READ_TEXT, BP_READ_WORDS } BpRead;
 typedef enum { BP_INIT, BP_START, BP_RESUME, BP_DROP } BpOperation;
 
 typedef struct {
@@ -176,7 +178,8 @@ static u32 bp_unbox(Env e, Term object) {
   return (u32)field;
 }
 
-static void bp_read_list(Env e, Term list, BpCall* call, bool string) {
+static void bp_read_list(Env e, Term list, BpCall* call, BpRead mode) {
+  bool string = mode == BP_READ_TEXT;
   size_t length = 0, capacity = 16;
   u32* data = bp_alloc(capacity * sizeof(u32));
   // Store before traversal so a runtime failure still frees the host buffer.
@@ -192,7 +195,9 @@ static void bp_read_list(Env e, Term list, BpCall* call, bool string) {
       data = grown;
       if (string) call->text = data; else call->items = data;
     }
-    data[length++] = string ? (u32)fields[0] : bp_unbox(e, fields[0]);
+    if (mode == BP_READ_WORDS && (u64)fields[0] > UINT32_MAX)
+      bendpy_panic("unexpected Bend U32 representation");
+    data[length++] = mode == BP_READ_OBJECTS ? bp_unbox(e, fields[0]) : (u32)fields[0];
     list = fields[1];
   }
   if ((term_tag(list) != TAG_PAK && term_tag(list) != TAG_CTR) || term_aux(list) != nil)
@@ -248,10 +253,12 @@ static Term bp_pack(Env e, BpCall* call) {
     case BP_UNIT: return term_pak(CID(Unit), 0);
     case BP_OBJECT: return bp_object(call, call->result);
     case BP_BOOL: return term_pak(call->result ? CID(True) : CID(False), 0);
-    case BP_STRING: {
-      Term text = term_pak(CID(SNil), 0);
+    case BP_STRING:
+    case BP_BYTES: {
+      bool bytes = call->result_kind == BP_BYTES;
+      Term text = term_pak(bytes ? CID(Nil) : CID(SNil), 0);
       for (size_t i = call->text_length; i > 0; --i)
-        text = io_node(e, CID(SCon), call->text[i - 1], text);
+        text = io_node(e, bytes ? CID(Con) : CID(SCon), call->text[i - 1], text);
       return text;
     }
     default: return (Term)call->result;
@@ -265,7 +272,7 @@ static void bp_decode(Env e, BpCall* call) {
   switch (call->effect) {
 #ifdef CID(export)
     case CID(export):
-      bp_read_list(e, f[0], call, true);
+      bp_read_list(e, f[0], call, BP_READ_TEXT);
       if (term_tag(f[1]) != TAG_CLO || term_loc(f[1]) != 0)
         bendpy_panic("exports require a captureless function; use a top-level wrapper");
       f[2] = term_aux(f[2]) == CID(True);
@@ -289,6 +296,12 @@ static void bp_decode(Env e, BpCall* call) {
 #ifdef CID(len)
     case CID(len):
 #endif
+#ifdef CID(truthy)
+    case CID(truthy):
+#endif
+#ifdef CID(to_bytes)
+    case CID(to_bytes):
+#endif
       f[0] = bp_unbox(e, f[0]); break;
 #ifdef CID(get_item)
     case CID(get_item):
@@ -303,7 +316,7 @@ static void bp_decode(Env e, BpCall* call) {
       for (int i = 0; i < 3; ++i) f[i] = bp_unbox(e, f[i]); break;
 #ifdef CID(getattr)
     case CID(getattr):
-      f[0] = bp_unbox(e, f[0]); bp_read_list(e, f[1], call, true); break;
+      f[0] = bp_unbox(e, f[0]); bp_read_list(e, f[1], call, BP_READ_TEXT); break;
 #endif
 #ifdef CID(builtins)
     case CID(builtins):
@@ -314,14 +327,21 @@ static void bp_decode(Env e, BpCall* call) {
 #ifdef CID(from_string)
     case CID(from_string):
 #endif
-      bp_read_list(e, f[0], call, true); break;
+#ifdef CID(import_module)
+    case CID(import_module):
+#endif
+      bp_read_list(e, f[0], call, BP_READ_TEXT); break;
 #ifdef CID(tuple)
     case CID(tuple):
 #endif
 #ifdef CID(list)
     case CID(list):
 #endif
-      bp_read_list(e, f[0], call, false); break;
+      bp_read_list(e, f[0], call, BP_READ_OBJECTS); break;
+#ifdef CID(from_bytes)
+    case CID(from_bytes):
+      bp_read_list(e, f[0], call, BP_READ_WORDS); break;
+#endif
 #ifdef CID(from_bool)
     case CID(from_bool): f[0] = term_aux(f[0]) == CID(True); break;
 #endif
@@ -654,6 +674,49 @@ static bool bp_effect(BpCall* call) {
       if (call->effect == CID(list)) { a = PySequence_List(result); Py_DECREF(result); result = a; }
 #endif
       return bp_add(call, result);
+#ifdef CID(truthy)
+    case CID(truthy): {
+      a = bp_get(call, f[0]); if (!a) return false;
+      int truth = PyObject_IsTrue(a); if (truth < 0) return false;
+      call->result_kind = BP_BOOL; call->result = truth; return true;
+    }
+#endif
+#ifdef CID(to_bytes)
+    case CID(to_bytes): {
+      a = bp_get(call, f[0]); if (!a) return false;
+      // Any C-contiguous buffer: bytes, bytearray, memoryview, array.array, ...
+      Py_buffer view;
+      if (PyObject_GetBuffer(a, &view, PyBUF_C_CONTIGUOUS) < 0) return false;
+      call->text = malloc((view.len ? view.len : 1) * sizeof(u32));
+      if (!call->text) { PyBuffer_Release(&view); PyErr_NoMemory(); return false; }
+      const unsigned char* bytes = view.buf;
+      for (Py_ssize_t i = 0; i < view.len; ++i) call->text[i] = bytes[i];
+      call->text_length = view.len; call->result_kind = BP_BYTES;
+      PyBuffer_Release(&view);
+      return true;
+    }
+#endif
+#ifdef CID(from_bytes)
+    case CID(from_bytes): {
+      result = PyBytes_FromStringAndSize(NULL, call->length);
+      if (!result) return false;
+      char* out = PyBytes_AS_STRING(result);
+      for (size_t i = 0; i < call->length; ++i) {
+        if (call->items[i] > 255) {
+          Py_DECREF(result);
+          PyErr_Format(PyExc_ValueError, "byte %zu is %u, outside range(256)", i, call->items[i]);
+          return false;
+        }
+        out[i] = (char)call->items[i];
+      }
+      return bp_add(call, result);
+    }
+#endif
+#ifdef CID(import_module)
+    case CID(import_module):
+      a = bp_text(call); if (!a) return false;
+      result = PyImport_Import(a); Py_DECREF(a); return bp_add(call, result);
+#endif
 #ifdef CID(len)
     case CID(len): {
       a = bp_get(call, f[0]); if (!a) return false;
@@ -681,7 +744,7 @@ static PyObject* bp_run(BpCall* call, BpOperation start) {
     ok = bp_effect(call);
     free(call->items); call->items = NULL;
     // to_string owns the return buffer until BP_RESUME packs it.
-    if (call->result_kind != BP_STRING) { free(call->text); call->text = NULL; }
+    if (call->result_kind != BP_STRING && call->result_kind != BP_BYTES) { free(call->text); call->text = NULL; }
     call->pending = ok;
   }
   PyObject* result = NULL;

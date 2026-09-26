@@ -46,3 +46,10 @@ def Laws.countdown_compose(a, b, acc):
       {==}
     case 1n+pred:
       Laws.countdown_compose(pred, b, Arithmetic.rounds(32n, acc))
+
+def Laws.sum_append(xs, ys, acc):
+  match xs:
+    case []:
+      {==}
+    case head <> tail:
+      Laws.sum_append(tail, ys, (acc + head : U32))

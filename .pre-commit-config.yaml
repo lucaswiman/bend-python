@@ -1,0 +1,27 @@
+# Run with prek (https://github.com/j178/prek), a drop-in pre-commit:
+#   uvx prek install        # once, as a git hook
+#   uvx prek run --all-files
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # frozen: v6.0.0
+    hooks:
+      - id: check-added-large-files
+      - id: check-merge-conflict
+      - id: check-toml
+      - id: check-yaml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: a56c0b927e6465d37cae3e97d35d4d18ab2b96cd  # frozen: v0.16.9
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+  - repo: local
+    hooks:
+      - id: bend-proofs
+        name: Bend proof gates
+        entry: scripts/check-proofs.sh
+        language: script
+        files: \.bend$
+        pass_filenames: false

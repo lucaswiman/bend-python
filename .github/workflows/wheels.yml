@@ -10,6 +10,25 @@ permissions:
   contents: read
 
 jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
+      # Proofs are checked by every wheel build below, which has Bend installed.
+      - run: SKIP=bend-proofs uvx prek@0.5.3 run --all-files --show-diff-on-failure
+
+  sdk:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
+      - run: uv build
+      # Validates metadata and that the README renders on PyPI.
+      - run: uvx twine check --strict dist/*
+      - name: The SDK wheel must stay pure Python
+        run: ls dist/bend_python-*-py3-none-any.whl
+
   manylinux:
     runs-on: ubuntu-24.04
     strategy:

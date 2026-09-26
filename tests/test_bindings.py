@@ -1,3 +1,5 @@
+import array
+from concurrent.futures import ThreadPoolExecutor
 import gc
 import importlib.util
 import math
@@ -13,7 +15,6 @@ import tempfile
 import textwrap
 import unittest
 import weakref
-from concurrent.futures import ThreadPoolExecutor
 
 try:
     import bend_example
@@ -37,16 +38,22 @@ class NativeBindingsTests(unittest.TestCase):
 
     def test_bad_arguments_leave_runtime_usable(self):
         for function, expected_zero in (
-            (bend_example.square, 0), (bend_example.increment, 1), (bend_example.identity, 0)
+            (bend_example.square, 0),
+            (bend_example.increment, 1),
+            (bend_example.identity, 0),
         ):
             for value in (None, True, False, 1.0, "1", b"1", [], object()):
-                with self.subTest(function=function.__name__, value=value):
-                    with self.assertRaises(TypeError):
-                        function(value)
+                with (
+                    self.subTest(function=function.__name__, value=value),
+                    self.assertRaises(TypeError),
+                ):
+                    function(value)
             for value in (-1, -(1 << 100), 1 << 32, 1 << 100):
-                with self.subTest(function=function.__name__, value=value):
-                    with self.assertRaises(OverflowError):
-                        function(value)
+                with (
+                    self.subTest(function=function.__name__, value=value),
+                    self.assertRaises(OverflowError),
+                ):
+                    function(value)
             with self.assertRaises(TypeError):
                 function()
             with self.assertRaises(TypeError):
@@ -73,12 +80,37 @@ class NativeBindingsTests(unittest.TestCase):
 
         generator = (x for x in range(3))
         values = (
-            None, True, False, 1 << 200, -(1 << 200), Integer(7), 0.1,
-            float("nan"), float("inf"), 2 + 3j, "a\x00é😀\ud800", b"\x00\xff",
-            bytearray(b"mutable"), [], (), {}, {1, 2}, frozenset({3}),
-            range(5), slice(1, 8, 2), memoryview(b"buffer"), Ellipsis,
-            NotImplemented, Custom(), object(), lambda: 1, generator,
-            iter([1, 2]), ValueError("error object"), Custom, sys,
+            None,
+            True,
+            False,
+            1 << 200,
+            -(1 << 200),
+            Integer(7),
+            0.1,
+            float("nan"),
+            float("inf"),
+            2 + 3j,
+            "a\x00é😀\ud800",
+            b"\x00\xff",
+            bytearray(b"mutable"),
+            [],
+            (),
+            {},
+            {1, 2},
+            frozenset({3}),
+            range(5),
+            slice(1, 8, 2),
+            memoryview(b"buffer"),
+            Ellipsis,
+            NotImplemented,
+            Custom(),
+            object(),
+            lambda: 1,
+            generator,
+            iter([1, 2]),
+            ValueError("error object"),
+            Custom,
+            sys,
         )
         for value in values:
             with self.subTest(type=type(value).__name__):
@@ -90,7 +122,8 @@ class NativeBindingsTests(unittest.TestCase):
         cycle.append(cycle)
         self.assertIs(bend_example.echo(cycle), cycle)
         for function, expected_type in (
-            (bend_example.pack, tuple), (bend_example.pack_list, list),
+            (bend_example.pack, tuple),
+            (bend_example.pack_list, list),
         ):
             result = function(cycle, cycle, None)
             self.assertIs(type(result), expected_type)
@@ -132,7 +165,8 @@ class NativeBindingsTests(unittest.TestCase):
             self.assertEqual(bend_example.half(-value), -math.inf)
         self.assertEqual(math.copysign(1, bend_example.half(-0.0)), -1)
         for function, value in (
-            (bend_example.flip, 1), (bend_example.half, 1),
+            (bend_example.flip, 1),
+            (bend_example.half, 1),
             (bend_example.echo_string, b"text"),
         ):
             with self.assertRaises(TypeError):
@@ -170,7 +204,12 @@ class NativeBindingsTests(unittest.TestCase):
         self.assertEqual(bend_example.attribute(3 + 4j, "imag"), 4.0)
         self.assertEqual(bend_example.attribute([], "append").__name__, "append")
         self.assertIs(bend_example.attribute(bend_example, "square"), bend_example.square)
-        for value, expected in (([], 0), ([1, 2, 3], 3), ("a\x00\u00e9\U0001f600", 4), (range(7), 7)):
+        for value, expected in (
+            ([], 0),
+            ([1, 2, 3], 3),
+            ("a\x00\u00e9\U0001f600", 4),
+            (range(7), 7),
+        ):
             self.assertEqual(bend_example.length(value), expected)
         self.assertIsNone(bend_example.make_none())
         key, value = object(), []
@@ -193,9 +232,8 @@ class NativeBindingsTests(unittest.TestCase):
             (bend_example.invoke, (len,), {"x": 1}, TypeError),
             (bend_example.invoke, (int, "x"), {}, ValueError),
         ):
-            with self.subTest(function=function.__name__, args=args):
-                with self.assertRaises(error):
-                    function(*args, **kwargs)
+            with self.subTest(function=function.__name__, args=args), self.assertRaises(error):
+                function(*args, **kwargs)
         self.assertEqual(bend_example.square(12), 144)
 
     def test_lengths_are_exact_beyond_u32(self):
@@ -214,6 +252,61 @@ class NativeBindingsTests(unittest.TestCase):
             with self.assertRaises(OverflowError):
                 bend_example.length(Sized(size))
         self.assertEqual(bend_example.length([1]), 1)
+
+    def test_bytes_truthiness_imports_and_five_arguments(self):
+        self.assertEqual(bend_example.reverse5(1, 2, 3, 4, 5), (5, 4, 3, 2, 1))
+        items = [object() for _ in range(5)]
+        self.assertTrue(
+            all(a is b for a, b in zip(bend_example.reverse5(*items), reversed(items), strict=True))
+        )
+        for value, expected in (
+            (0, False),
+            (1, True),
+            ([], False),
+            ([0], True),
+            ("", False),
+            (None, False),
+            (float("nan"), True),
+        ):
+            self.assertIs(bend_example.truth(value), expected)
+        self.assertIs(bend_example.load("operator"), __import__("operator"))
+        self.assertIs(bend_example.load("collections.abc"), sys.modules["collections.abc"])
+        for data in (
+            b"",
+            b"\x00",
+            b"\x01\x02\xff",
+            bytes(range(256)) * 3,
+            bytearray(b"abc"),
+            memoryview(b"xyz"),
+            array.array("H", [1, 65535]),
+        ):
+            raw = bytes(data)
+            self.assertEqual(bend_example.checksum(data), sum(raw) & U32_MAX)
+            self.assertEqual(bend_example.reversed_bytes(data), raw[::-1])
+            self.assertIs(type(bend_example.reversed_bytes(data)), bytes)
+        self.assertEqual(bend_example.make_bytes(), b"")
+        self.assertEqual(bend_example.make_bytes(0, 255, 65), b"\x00\xffA")
+
+        class Explodes:
+            def __bool__(self):
+                raise ZeroDivisionError("no truth")
+
+        for function, args, error in (
+            (bend_example.reverse5, (1, 2, 3, 4), TypeError),
+            (bend_example.reverse5, (1, 2, 3, 4, 5, 6), TypeError),
+            (bend_example.truth, (Explodes(),), ZeroDivisionError),
+            (bend_example.load, ("no_such_module_bend",), ModuleNotFoundError),
+            (bend_example.load, (1,), TypeError),
+            (bend_example.checksum, ("text",), TypeError),
+            (bend_example.checksum, ([1, 2],), TypeError),
+            (bend_example.checksum, (memoryview(b"abcd")[::2],), BufferError),
+            (bend_example.make_bytes, (256,), ValueError),
+            (bend_example.make_bytes, (1, -1), OverflowError),
+            (bend_example.make_bytes, (1, "x"), TypeError),
+        ):
+            with self.subTest(function=function.__name__, args=args), self.assertRaises(error):
+                function(*args)
+        self.assertEqual(bend_example.checksum(b"ok"), 218)
 
     def test_exports_behave_like_module_functions(self):
         for name in ("square", "echo", "make_dict"):
@@ -248,12 +341,17 @@ class NativeBindingsTests(unittest.TestCase):
 
     def test_bend_constructs_python_builtin_objects(self):
         cases = (
-            ("bool", (0,), False), ("int", (str(1 << 200),), 1 << 200),
-            ("float", ("0.125",), 0.125), ("complex", (1, 2), 1 + 2j),
-            ("str", (42,), "42"), ("bytes", ([0, 255],), b"\x00\xff"),
+            ("bool", (0,), False),
+            ("int", (str(1 << 200),), 1 << 200),
+            ("float", ("0.125",), 0.125),
+            ("complex", (1, 2), 1 + 2j),
+            ("str", (42,), "42"),
+            ("bytes", ([0, 255],), b"\x00\xff"),
             ("bytearray", (b"data",), bytearray(b"data")),
-            ("list", ((1, 2),), [1, 2]), ("tuple", ([1, 2],), (1, 2)),
-            ("dict", ([("x", 1)],), {"x": 1}), ("set", ([1, 1],), {1}),
+            ("list", ((1, 2),), [1, 2]),
+            ("tuple", ([1, 2],), (1, 2)),
+            ("dict", ([("x", 1)],), {"x": 1}),
+            ("set", ([1, 1],), {1}),
             ("frozenset", ([1, 1],), frozenset({1})),
             ("range", (1, 8, 2), range(1, 8, 2)),
             ("slice", (1, 8, 2), slice(1, 8, 2)),
@@ -276,9 +374,13 @@ class NativeBindingsTests(unittest.TestCase):
     def test_callbacks_can_reenter_and_preserve_exceptions(self):
         self.assertEqual(bend_example.call(lambda a, *, b: a + b, 12, b=30), 42)
         self.assertEqual(bend_example.call(bend_example.square, 12), 144)
-        self.assertEqual(bend_example.call(
-            lambda x: bend_example.call(lambda y: bend_example.add(y, 1), x), 41,
-        ), 42)
+        self.assertEqual(
+            bend_example.call(
+                lambda x: bend_example.call(lambda y: bend_example.add(y, 1), x),
+                41,
+            ),
+            42,
+        )
 
         class Mapping:
             def __getitem__(self, key):
@@ -341,7 +443,9 @@ class NativeBindingsTests(unittest.TestCase):
                 self.assertEqual(bend_example.identity(value), value)
                 payload = {"seed": seed, "value": value}
                 self.assertIs(bend_example.echo(payload), payload)
-                self.assertEqual(bend_example.call(bend_example.increment, value), (value + 1) & U32_MAX)
+                self.assertEqual(
+                    bend_example.call(bend_example.increment, value), (value + 1) & U32_MAX
+                )
 
         with ThreadPoolExecutor(max_workers=8) as executor:
             list(executor.map(worker, range(8)))
@@ -385,7 +489,11 @@ class NativeBindingsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as cwd:
             result = subprocess.run(
                 [sys.executable, "-c", textwrap.dedent(source)],
-                cwd=cwd, env=env, capture_output=True, text=True, timeout=30,
+                cwd=cwd,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=30,
             )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
@@ -464,7 +572,9 @@ class NativeBindingsTests(unittest.TestCase):
             assert bend_example.increment(41) == 42
         """)
 
-    @unittest.skipUnless(sysconfig.get_config_var("Py_GIL_DISABLED"), "requires free-threaded CPython")
+    @unittest.skipUnless(
+        sysconfig.get_config_var("Py_GIL_DISABLED"), "requires free-threaded CPython"
+    )
     def test_import_does_not_enable_gil(self):
         self.run_fresh_python("""
             import sys

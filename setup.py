@@ -8,5 +8,4 @@ from setuptools import setup
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 from bend_python.build import BuildPyWithBendLibrary
 
-
 setup(cmdclass={"build_py": BuildPyWithBendLibrary})

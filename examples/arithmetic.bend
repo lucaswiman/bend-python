@@ -36,3 +36,10 @@ def countdown(n: Nat, acc: U32) -> U32:
 
 def slow(n: U32) -> U32:
   countdown(U32.to_nat(n), 0)
+
+def sum(values: List<U32>, acc: U32) -> U32:
+  match values:
+    case []:
+      acc
+    case head <> tail:
+      sum(tail, (acc + head : U32))

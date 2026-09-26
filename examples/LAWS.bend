@@ -53,3 +53,9 @@ law countdown_compose:
   for +b: Nat
   for acc: U32
   {Arithmetic.countdown((a + b : Nat), acc) == Arithmetic.countdown(b, Arithmetic.countdown(a, acc)) : U32}
+
+law sum_append:
+  for xs: List<U32>
+  for ys: List<U32>
+  for acc: U32
+  {Arithmetic.sum(List.append(&1, U32, xs, ys), acc) == Arithmetic.sum(ys, Arithmetic.sum(xs, acc)) : U32}
