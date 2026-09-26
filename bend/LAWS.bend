@@ -61,3 +61,25 @@ law pair_complete:
   for xs: List<Python.Object>
   for exact: {Python.arity(xs) == 2n : Nat}
   {Python.pair(xs) == Maybe.bind(&1, Python.Object, Pair(Python.Object, Python.Object), Python.argument(xs, 0n), left => Maybe.bind(&1, Python.Object, Pair(Python.Object, Python.Object), Python.argument(xs, 1n), right => Some{(left, right)})) : Maybe<Pair(Python.Object, Python.Object)>}
+
+# The typed adapters' IO wrappers: a correct argument list yields exactly its
+# elements, and any other length yields the TypeError effect. require_no_kwargs
+# is a foreign effect checked in C and covered by tests, not here.
+law singleton_accepted:
+  for +x: Python.Object
+  {Python.require_singleton(Python.singleton([x])) == IO.pure(Python.Object, x) : IO(Python.Object)}
+
+law singleton_rejected:
+  for xs: List<Python.Object>
+  for wrong: {Nat.is_eq(Python.arity(xs), 1n) == False{} : Bool}
+  {Python.require_singleton(Python.singleton(xs)) == Python.type_error(Python.Object, "expected exactly one positional argument") : IO(Python.Object)}
+
+law pair_accepted:
+  for +x: Python.Object
+  for +y: Python.Object
+  {Python.require_pair(Python.pair([x, y])) == IO.pure(Pair(Python.Object, Python.Object), (x, y)) : IO(Pair(Python.Object, Python.Object))}
+
+law pair_rejected:
+  for xs: List<Python.Object>
+  for wrong: {Nat.is_eq(Python.arity(xs), 2n) == False{} : Bool}
+  {Python.require_pair(Python.pair(xs)) == Python.type_error(Pair(Python.Object, Python.Object), "expected exactly two positional arguments") : IO(Pair(Python.Object, Python.Object))}

@@ -20,6 +20,7 @@
 - [Pinned compiler](https://github.com/bendlang/bend/blob/v2.0.28/bend2/comp.ts): patched CPU globals live in exclusive per-invocation runtime contexts, selected through TLS. Captureless closures can cross contexts; captured environments are consumed.
 - Generic `Call -> IO(Object)` callbacks preserve every Python object's identity/precision through per-invocation strong-reference arenas. Never retain/forge handles across calls.
 - **Object wrappers may be packed TAG_PAK or heap TAG_CTR**; both must unbox correctly. This matters after Bend copies/reboxes handles.
+- Handles are sealed per invocation (`bp_object`/`bp_get`); never pack or accept a raw arena index. Bend has no private constructors, so sealing is what rejects forged `PyObject{n}`.
 - Detach for the short idle-cache lock and optionally during pure work (always on free-threaded builds); reattach before Python effects/refcounts. Concurrent and reentrant calls own separate contexts. No Python API inside native evaluation. Each call uses one worker; upstream pool entry is rejected.
 - Free-threaded Python needs attachment plus thread-safe APIs, not a GIL. C boundaries check attachment; traditional builds check GIL ownership too. Main interpreter only, including checks on every call.
 - THREAD_PROOF proves attachment and context-lease models, **not C correspondence or CPython**. Lease laws assume distinct allocations and atomic cache operations; do not claim end-to-end GIL/refcount verification.

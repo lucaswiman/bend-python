@@ -141,11 +141,10 @@ array/buffer computation support is future work.
 
 A `Python.Object` is an invocation-scoped handle backed by a strong Python
 reference. It is not the object's memory address. Do not construct handles
-manually or save them for later calls. The bridge bounds-checks handles against
-the current invocation, so a forged handle is either rejected or aliases another
-object from the same call; it cannot reach freed memory or another call's objects.
-All temporary references are released when the invocation finishes, preserving
-its result.
+manually or save them for later calls. Handles are sealed with a per-call key,
+so a made-up or stale handle raises `ValueError` instead of reaching another
+object. All temporary references are released when the invocation finishes,
+preserving its result.
 
 | Bend API | Behavior |
 |---|---|
@@ -226,51 +225,70 @@ fork-join worker pool and GPU execution are not enabled by this binding.
 ## Proofs and trust boundary
 
 The build checks the library and application proof files before emitting native
-code. The library laws cover the pure argument helpers: `arity`/`argument`
-lookup, and `singleton`/`pair`, which succeed exactly when the list has one/two
-elements (`*_exact_arity`, `*_complete`). The typed adapters use those parsers,
-but the IO wrappers around them and the keyword check are not proved. Most
-library and example laws restate a definition; they guard against regressions
-rather than establish nontrivial properties.
+code. Every model below was mutation-tested: breaking a transition, the reuse
+rule, the lease guard, the free-threaded policy, or an adapter makes a law fail.
 
-The thread-state proof is a specification of the intended detach/evaluate/restore
-protocol: a Python effect is accepted only in the attached state, and every
-modeled call sequence for either GIL policy ends attached. The model permits
-native work in any state and gives failure no separate control flow, so "no
-Python API during native work" and "restore after a native failure" are
-stipulations of the model, not consequences of it. The separate context-lease
-model proves that a lease is granted only from an idle slot, that a leased slot
-cannot be acquired again, that only a successful return with cache space makes
-a slot reusable, and that updating one slot leaves the others unchanged. The
-lease and thread-state models are not connected, and slot isolation is a
-list-update lemma: in C it comes from separate allocations. These laws assume
-distinct allocation identities and atomic acquisition/return; the model indexes
-contexts by slot while the C cache is a mutex-protected linked list, and that
-correspondence is trusted. **This is a protocol proof, not an end-to-end proof
-of the C implementation or CPython.** A temporary instrumented extension
-requires two native evaluations to enter together with distinct heaps and OS
-threads; the old serialized implementation fails this test. Proving that the C
-implementation refines the model remains an open obligation; the generated
-compiler/runtime and C bridge are trusted code.
+**Argument adapters** (`bend/LAWS.bend`). `singleton`/`pair` succeed exactly
+when the list has one/two elements (`*_exact_arity`, `*_complete`), and the IO
+wrappers the typed adapters use return those elements or the `TypeError`
+effect for every other length (`*_accepted`, `*_rejected`). The checker notes
+that these statements mention foreign effects (`type_error`); they are treated
+as uninterpreted constants, so the laws fix which effect is requested, not what
+C does with it. The keyword check is a foreign effect and is tested only. The
+`arity`/`argument` laws restate definitions.
 
-Bend reports foreign-code dependencies for exported wrappers. Pure proofs do not
-establish correctness of that foreign code, its allocator, or Python object
-reference counting.
+**Thread state and leases** (`bend/thread_state.bend`). Native evaluation has
+its own states (attached or detached), entered by `Enter` and left only by
+`Leave`; a native failure longjmps back inside that window, so it leaves the
+same way. Proved: a Python effect is accepted only while attached and outside
+native evaluation (`accepted_effect_attached`, `native_effect_rejected`);
+inside native evaluation nothing but `Leave` is accepted (`native_only_leaves`),
+so neither Python effects nor a save/restore can interleave with evaluation;
+every native call returns attached for both policies and both outcomes
+(`native_returns_attached`); free-threaded builds always detach
+(`free_threaded_detaches`). Leases are part of one session model with the thread
+state: lease operations are rejected unless detached (`acquire_requires_detached`,
+`return_requires_detached`); a lease is granted only from an idle slot and a
+leased slot cannot be granted again (`acquisition_requires_available`,
+`reserved_acquisition_rejected`); only a leased slot can be returned, so a
+double return is rejected (`unleased_return_rejected`, `double_return_rejected`);
+a slot becomes reusable only after a successful call whose heap stayed small
+and when the cache has space (`reusable_requires_*`), mirroring
+`bp_runtime_reusable`. Whole invocations, acquire through return, end attached
+with the slot updated as specified, and an invocation on a leased slot is
+rejected (`invocation_returns_attached`, `leased_invocation_rejected`).
+
+What the models do not establish: that C follows them. The C bridge,
+generated runtime, and CPython are trusted code; proving that C refines the
+model remains open. Slot isolation (`context_update_isolated`,
+`failure_isolated`) is a list-update lemma; in C it comes from separate
+allocations and thread-local `bp_current`, and the model's slot indices stand
+for a mutex-protected linked list whose atomicity is trusted. A temporary
+instrumented extension requires two native evaluations to enter together with
+distinct heaps and OS threads; the old serialized implementation fails this test.
+
+**Examples** (`examples/LAWS.bend`). Most laws restate definitions;
+`flip_involution`, `rounds_compose` and `countdown_compose` need case analysis
+or induction.
+
+Pure proofs do not establish correctness of foreign code, its allocator, or
+Python object reference counting.
 
 ### Core invariants
 
 | Invariant | How it is established |
 |---|---|
-| A handle refers to a strong reference in the current invocation's arena; all arena references are released when the invocation ends | C: `bp_get` bounds-checks each handle against the current arena; `bp_run` decrefs the arena after returning the lease. Tested (`test_call_arena_releases_owned_references`). A manually built in-range handle aliases another object of the same call rather than failing; not prevented. |
-| Handles do not outlive their invocation | Trusted: exports are captureless and Bend has no mutable global state, so a handle cannot reach a later call except by forging one. |
+| A handle refers to a strong reference in the current invocation's arena; all arena references are released when the invocation ends | C: `bp_get` opens and bounds-checks each handle against the current arena; `bp_run` decrefs the arena after returning the lease. Tested (`test_call_arena_releases_owned_references`). |
+| Bend code cannot forge a handle | Bend has no private constructors, so C seals handles: each is the arena index under a keyed 32-bit permutation with a fresh per-invocation key. A made-up handle is accepted with probability at most (objects in the call)/2³², and a rejected one raises `ValueError` and aborts the call. Tested (`test_forged_handles_are_rejected`). Probabilistic, and not a boundary against deliberately malicious Bend code, which can already import its own C. |
+| Handles do not outlive their invocation | Exports are captureless (below) and Bend has no mutable global state, so a handle cannot reach a later call; a handle copied from another call fails to open under the new key. |
 | Objects pass through unchanged (identity, precision, aliases, cycles) | C stores the original `PyObject*` and returns it with a new reference. Tested. |
-| Python API runs only while attached, and never inside native evaluation | C: `bp_assert_attached` at every boundary (fatal error otherwise; also checks the GIL on conventional builds and that no evaluation is active on this thread). Modeled by `accepted_effect_attached`, `release_before_restore_rejected`; absence of Python calls inside native work is trusted. |
-| Every call returns to Python attached | Modeled by `native_returns_attached`, `acquire_returns_attached`, `return_restores_attachment`; C's `setjmp` placement for native failures is trusted. Free-threaded builds always detach; the model covers that as the `True{}` policy. |
-| One invocation per runtime instance | Modeled by `acquisition_requires_available`, `reserved_acquisition_rejected`; C removes an instance from the idle list under the pool mutex (trusted), and evaluation state is thread-local. Tested by the instrumented concurrency test. |
-| A native failure affects only its instance | Modeled by `failure_isolated`, `failed_context_unavailable`. C marks the instance poisoned and unmaps it. Tested (`test_native_failure_discards_only_the_failed_context`). Ordinary Python exceptions only drop the continuation and keep the instance; its reuse is tested, not proved. |
-| Poisoned or large instances are never reused | Modeled by `failed_context_discarded`, `reusable_requires_success`, `reusable_requires_cache_space`. The model's `cache_space` stands for C's "heap within 32 MiB and fewer than eight cached" (`bp_runtime_reusable`); that mapping is trusted. Tested for heap release. |
-| Exported callbacks are captureless | C rejects a non-captureless closure at `export`, failing import. Typed helpers ensure it with templates. Not proved; the rejection path is untested. |
-| Typed adapters reject wrong arity and keywords with `TypeError` | Pure arity parsing proved (`singleton_exact_arity`, `pair_exact_arity`, `singleton_complete`, `pair_complete`). The `require_*` IO wrappers and the C keyword check are tested, not proved. |
+| Python API runs only while attached, and never inside native evaluation | Protocol proved (`accepted_effect_attached`, `native_effect_rejected`, `native_only_leaves`). C checks with `bp_assert_attached` at every boundary (fatal error otherwise; also checks the GIL on conventional builds and that no evaluation is active on this thread). |
+| Every call returns to Python attached | Protocol proved (`native_returns_attached`, `invocation_returns_attached`), including native failures; C's `setjmp` placement before `PyEval_RestoreThread` is trusted. |
+| One invocation per runtime instance | Protocol proved (`acquisition_requires_available`, `reserved_acquisition_rejected`, `leased_invocation_rejected`, `double_return_rejected`); C's pool mutex is trusted. Tested by the instrumented concurrency test. |
+| A native failure affects only its instance | Proved in the model (`failure_isolated`, `failed_context_unavailable`); C marks the instance poisoned and unmaps it. Tested (`test_native_failure_discards_only_the_failed_context`). Ordinary Python exceptions only drop the continuation and keep the instance; its reuse is tested. |
+| Poisoned or large instances are never reused | Proved in the model (`failed_context_discarded`, `reusable_requires_success`, `reusable_requires_small_heap`, `reusable_requires_cache_space`). The model's inputs stand for `bp_runtime_reusable` and the idle count; that mapping is trusted. Tested for heap release. |
+| Exported callbacks are captureless | C rejects a closure with captures at `export`, failing import; typed helpers ensure it with templates. Tested (`test_capturing_export_fails_import`); not proved. |
+| Typed adapters reject wrong arity and keywords with `TypeError` | Arity proved for the parsers and IO wrappers (`*_exact_arity`, `*_complete`, `*_accepted`, `*_rejected`). The keyword check is C, tested. |
 | U32/F32/String conversion semantics | C only; tested. U32 rejects `bool`/non-`int` and values outside `[0, 2**32 - 1]`. F32 requires a `float` and narrows with IEEE round-to-nearest. Strings copy codepoints; codepoints above U+10FFFF are rejected on return. |
 
 ## Manylinux wheels: Docker and GitHub Actions

@@ -1,6 +1,8 @@
 import Base
 import ./thread_state.bend as Thread
 
+# Python effects
+
 law detached_effect_rejected:
   {Thread.step(Thread.Detached{}, Thread.PythonEffect{}) == None{} : Maybe<Thread.State>}
 
@@ -10,31 +12,63 @@ law accepted_effect_attached:
   for accepted: {Thread.step(state, Thread.PythonEffect{}) == Some{next} : Maybe<Thread.State>}
   {state == Thread.Attached{} : Thread.State}
 
+# Inside native evaluation, no Python effect, save, restore, lease operation,
+# or nested entry is accepted: the only way out is Leave.
+law native_effect_rejected:
+  for state: Thread.State
+  for native: {Thread.is_native(state) == True{} : Bool}
+  {Thread.step(state, Thread.PythonEffect{}) == None{} : Maybe<Thread.State>}
+
+law native_only_leaves:
+  for state: Thread.State
+  for operation: Thread.Operation
+  for native: {Thread.is_native(state) == True{} : Bool}
+  for staying: {Thread.is_leave(operation) == False{} : Bool}
+  {Thread.step(state, operation) == None{} : Maybe<Thread.State>}
+
+# Attachment
+
 law save_restore:
   {Thread.run([Thread.Save{}, Thread.Restore{}], Thread.Attached{}) == Some{Thread.Attached{}} : Maybe<Thread.State>}
 
-# Each context's normal and error completion follows the same restore policy.
+# Both detach policies and both outcomes (a native failure also leaves through
+# Leave) return to the attached state.
 law native_returns_attached:
-  for release_gil: Bool
+  for detach: Bool
   for outcome: Thread.Outcome
-  {Thread.run(Thread.native_call(release_gil, outcome), Thread.Attached{}) == Some{Thread.Attached{}} : Maybe<Thread.State>}
+  {Thread.run(Thread.native_call(detach, outcome), Thread.Attached{}) == Some{Thread.Attached{}} : Maybe<Thread.State>}
 
 law native_then_effect_accepted:
-  for release_gil: Bool
+  for detach: Bool
   for outcome: Thread.Outcome
-  {Thread.run(List.append(&1, Thread.Operation, Thread.native_call(release_gil, outcome), [Thread.PythonEffect{}]), Thread.Attached{}) == Some{Thread.Attached{}} : Maybe<Thread.State>}
+  {Thread.run(List.append(&1, Thread.Operation, Thread.native_call(detach, outcome), [Thread.PythonEffect{}]), Thread.Attached{}) == Some{Thread.Attached{}} : Maybe<Thread.State>}
 
 law release_before_restore_rejected:
   for outcome: Thread.Outcome
-  {Thread.run([Thread.Save{}, Thread.NativeWork{outcome}, Thread.PythonEffect{}], Thread.Attached{}) == None{} : Maybe<Thread.State>}
+  {Thread.run([Thread.Save{}, Thread.Enter{}, Thread.Leave{outcome}, Thread.PythonEffect{}], Thread.Attached{}) == None{} : Maybe<Thread.State>}
 
-law acquire_returns_attached:
-  {Thread.run(Thread.acquire_call(), Thread.Attached{}) == Some{Thread.Attached{}} : Maybe<Thread.State>}
+law free_threaded_detaches:
+  for release_gil: Bool
+  {Thread.detaches(release_gil, True{}) == True{} : Bool}
 
-law return_restores_attachment:
+# Leases
+
+law acquire_requires_detached:
+  for state: Thread.State
+  for pool: List<&2, Thread.Context>
+  for slot: Nat
+  for attached: {state != Thread.Detached{} : Thread.State}
+  {Thread.step_session(Thread.Session{state, pool}, Thread.AcquireLease{slot}) == None{} : Maybe<Thread.Session>}
+
+law return_requires_detached:
+  for state: Thread.State
+  for pool: List<&2, Thread.Context>
+  for slot: Nat
   for outcome: Thread.Outcome
+  for small_heap: Bool
   for cache_space: Bool
-  {Thread.run(Thread.return_call(outcome, cache_space), Thread.Attached{}) == Some{Thread.Attached{}} : Maybe<Thread.State>}
+  for attached: {state != Thread.Detached{} : Thread.State}
+  {Thread.step_session(Thread.Session{state, pool}, Thread.ReturnLease{slot, outcome, small_heap, cache_space}) == None{} : Maybe<Thread.Session>}
 
 law reserved_unavailable:
   for pool: List<&2, Thread.Context>
@@ -46,7 +80,39 @@ law reserved_acquisition_rejected:
   for slot: Nat
   {Thread.acquire(Thread.reserve(pool, slot), slot) == None{} : Maybe<List<&2, Thread.Context>>}
 
-# A context's success/failure cannot change any other allocation's state.
+law acquisition_requires_available:
+  for pool: List<&2, Thread.Context>
+  for slot: Nat
+  for next: List<&2, Thread.Context>
+  for acquired: {Thread.acquire(pool, slot) == Some{next} : Maybe<List<&2, Thread.Context>>}
+  {Thread.available(pool, slot) == True{} : Bool}
+
+law reserved_returnable:
+  for pool: List<&2, Thread.Context>
+  for slot: Nat
+  for free: {Thread.available(pool, slot) == True{} : Bool}
+  {Thread.returnable(Thread.reserve(pool, slot), slot) == True{} : Bool}
+
+law unleased_return_rejected:
+  for pool: List<&2, Thread.Context>
+  for slot: Nat
+  for outcome: Thread.Outcome
+  for small_heap: Bool
+  for cache_space: Bool
+  for unleased: {Thread.returnable(pool, slot) == False{} : Bool}
+  {Thread.release(pool, slot, outcome, small_heap, cache_space) == None{} : Maybe<List<&2, Thread.Context>>}
+
+law double_return_rejected:
+  for pool: List<&2, Thread.Context>
+  for slot: Nat
+  for outcome: Thread.Outcome
+  for small_heap: Bool
+  for cache_space: Bool
+  {Thread.returnable(Thread.finish(pool, slot, outcome, small_heap, cache_space), slot) == False{} : Bool}
+
+# Updating one slot leaves every other slot unchanged. In C, isolation comes
+# from separate allocations and thread-local bp_current; this is the model's
+# counterpart, a List.set/List.get lemma.
 law context_update_isolated:
   for pool: List<&2, Thread.Context>
   for target: Nat
@@ -56,44 +122,66 @@ law context_update_isolated:
   {List.get(&2, Thread.Context, List.set(&2, Thread.Context, pool, target, value), other) == List.get(&2, Thread.Context, pool, other) : Maybe<&2, Thread.Context>}
 
 law failure_isolated:
+  for small_heap: Bool
   for cache_space: Bool
   for pool: List<&2, Thread.Context>
   for target: Nat
   for other: Nat
   for different: {Nat.is_eq(target, other) == False{} : Bool}
-  {List.get(&2, Thread.Context, Thread.finish(pool, target, Thread.Failed{}, cache_space), other) == List.get(&2, Thread.Context, pool, other) : Maybe<&2, Thread.Context>}
+  {List.get(&2, Thread.Context, Thread.finish(pool, target, Thread.Failed{}, small_heap, cache_space), other) == List.get(&2, Thread.Context, pool, other) : Maybe<&2, Thread.Context>}
+
+# Reuse
 
 law failed_context_discarded:
+  for small_heap: Bool
   for cache_space: Bool
-  {Thread.completion(Thread.Failed{}, cache_space) == Thread.Discarded{} : Thread.Context}
+  {Thread.completion(Thread.Failed{}, small_heap, cache_space) == Thread.Discarded{} : Thread.Context}
 
 law failed_context_unavailable:
+  for small_heap: Bool
   for cache_space: Bool
   for pool: List<&2, Thread.Context>
   for slot: Nat
-  {Thread.available(Thread.finish(pool, slot, Thread.Failed{}, cache_space), slot) == False{} : Bool}
+  {Thread.available(Thread.finish(pool, slot, Thread.Failed{}, small_heap, cache_space), slot) == False{} : Bool}
 
 law successful_context_reusable:
-  {Thread.completion(Thread.Succeeded{}, True{}) == Thread.Idle{} : Thread.Context}
-
-# Converses: a lease is granted only from an Idle slot, and only a successful
-# completion with cache space returns a context to Idle. C folds "not poisoned,
-# heap within 32 MiB, fewer than eight cached" into these inputs (trusted).
-law acquisition_requires_available:
-  for pool: List<&2, Thread.Context>
-  for slot: Nat
-  for next: List<&2, Thread.Context>
-  for acquired: {Thread.acquire(pool, slot) == Some{next} : Maybe<List<&2, Thread.Context>>}
-  {Thread.available(pool, slot) == True{} : Bool}
+  {Thread.completion(Thread.Succeeded{}, True{}, True{}) == Thread.Idle{} : Thread.Context}
 
 law reusable_requires_success:
   for outcome: Thread.Outcome
+  for small_heap: Bool
   for cache_space: Bool
-  for reusable: {Thread.completion(outcome, cache_space) == Thread.Idle{} : Thread.Context}
+  for reusable: {Thread.completion(outcome, small_heap, cache_space) == Thread.Idle{} : Thread.Context}
   {outcome == Thread.Succeeded{} : Thread.Outcome}
+
+law reusable_requires_small_heap:
+  for outcome: Thread.Outcome
+  for small_heap: Bool
+  for cache_space: Bool
+  for reusable: {Thread.completion(outcome, small_heap, cache_space) == Thread.Idle{} : Thread.Context}
+  {small_heap == True{} : Bool}
 
 law reusable_requires_cache_space:
   for outcome: Thread.Outcome
+  for small_heap: Bool
   for cache_space: Bool
-  for reusable: {Thread.completion(outcome, cache_space) == Thread.Idle{} : Thread.Context}
+  for reusable: {Thread.completion(outcome, small_heap, cache_space) == Thread.Idle{} : Thread.Context}
   {cache_space == True{} : Bool}
+
+# Whole invocations: the thread-state and lease models together.
+
+law invocation_returns_attached:
+  for rest: List<&2, Thread.Context>
+  for detach: Bool
+  for outcome: Thread.Outcome
+  for small_heap: Bool
+  for cache_space: Bool
+  {Thread.run_session(Thread.invocation(0n, detach, outcome, small_heap, cache_space), Thread.Session{Thread.Attached{}, Thread.Idle{} <> rest}) == Some{Thread.Session{Thread.Attached{}, Thread.completion(outcome, small_heap, cache_space) <> rest}} : Maybe<Thread.Session>}
+
+law leased_invocation_rejected:
+  for rest: List<&2, Thread.Context>
+  for detach: Bool
+  for outcome: Thread.Outcome
+  for small_heap: Bool
+  for cache_space: Bool
+  {Thread.run_session(Thread.invocation(0n, detach, outcome, small_heap, cache_space), Thread.Session{Thread.Attached{}, Thread.Leased{} <> rest}) == None{} : Maybe<Thread.Session>}

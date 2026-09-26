@@ -113,3 +113,40 @@ def Laws.pair_complete(xs, exact):
       {==}
     case left <> right <> _ <> tail:
       Empty.absurd({None{} == Some{(left, right)} : Maybe<Pair(Python.Object, Python.Object)>}, succ_not_zero(Python.arity(tail), succ_injective(1n+Python.arity(tail), 0n, succ_injective(1n+1n+Python.arity(tail), 1n, exact))))
+
+def true_discriminator(value: Bool) -> Type:
+  match value:
+    case True{}:
+      Unit
+    case False{}:
+      Empty
+
+def true_not_false(different: {True{} == False{} : Bool}) -> Empty:
+  %different : true_discriminator(_)
+  Unit{}
+
+def Laws.singleton_accepted(x):
+  {==}
+
+def Laws.singleton_rejected(xs, wrong):
+  match xs:
+    case []:
+      {==}
+    case [x]:
+      Empty.absurd({IO.pure(Python.Object, x) == Python.type_error(Python.Object, "expected exactly one positional argument") : IO(Python.Object)}, true_not_false(wrong))
+    case _ <> _ <> _:
+      {==}
+
+def Laws.pair_accepted(x, y):
+  {==}
+
+def Laws.pair_rejected(xs, wrong):
+  match xs:
+    case []:
+      {==}
+    case [_]:
+      {==}
+    case [x, y]:
+      Empty.absurd({IO.pure(Pair(Python.Object, Python.Object), (x, y)) == Python.type_error(Pair(Python.Object, Python.Object), "expected exactly two positional arguments") : IO(Pair(Python.Object, Python.Object))}, true_not_false(wrong))
+    case _ <> _ <> _ <> _:
+      {==}
