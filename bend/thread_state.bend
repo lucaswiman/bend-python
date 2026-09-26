@@ -196,9 +196,30 @@ def acquire_call(slot: Nat) -> List<Operation>:
 def return_call(slot: Nat, outcome: Outcome, small_heap: Bool, cache_space: Bool) -> List<Operation>:
   [Save{}, ReturnLease{slot, outcome, small_heap, cache_space}, Restore{}]
 
-# bp_run: lease, evaluate, run the resulting Python effect (including raising a
-# failure), then return the lease before releasing the arena.
-def invocation(+slot: Nat, detach: Bool, +outcome: Outcome, small_heap: Bool, cache_space: Bool) -> List<Operation>:
+# A lease is healthy only if every native step succeeded; one failure poisons it.
+def health(outcomes: List<&2, Outcome>) -> Outcome:
+  match outcomes:
+    case []:
+      Succeeded{}
+    case Succeeded{} <> tail:
+      health(tail)
+    case Failed{} <> _:
+      Failed{}
+
+# bp_run's loop: each native step (start, resume, or dropping the continuation
+# after a Python exception) is followed by attached Python work: performing the
+# requested effect, or raising. C stops after the first native failure; the
+# model also allows later rounds, so its laws cover that too.
+def rounds(+detach: Bool, outcomes: List<&2, Outcome>) -> List<Operation>:
+  match outcomes:
+    case []:
+      []
+    case outcome <> tail:
+      List.append(&1, Operation, native_call(detach, outcome), PythonEffect{} <> rounds(detach, tail))
+
+# bp_run: lease, run any number of rounds, then return the lease (marked by
+# the rounds' health) before releasing the arena.
+def invocation(+slot: Nat, detach: Bool, +outcomes: List<&2, Outcome>, small_heap: Bool, cache_space: Bool) -> List<Operation>:
   List.append(&1, Operation, acquire_call(slot),
-    List.append(&1, Operation, native_call(detach, outcome),
-      PythonEffect{} <> return_call(slot, outcome, small_heap, cache_space)))
+    List.append(&1, Operation, rounds(detach, outcomes),
+      return_call(slot, health(outcomes), small_heap, cache_space)))

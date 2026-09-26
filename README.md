@@ -161,9 +161,10 @@ The build refuses to compile unless every law checks:
   happen only while attached and never during native evaluation, that every
   call returns attached (failures included), and that free-threaded builds
   detach ([`bend/THREAD_LAWS.bend`](https://github.com/lucaswiman/bend-python/blob/main/bend/THREAD_LAWS.bend)).
-- **Runtime leases.** In the same model, one call owns an instance at a time,
-  a lease cannot be returned twice, and only healthy, small instances are cached
-  for reuse.
+- **Runtime leases.** In the same model, a call with any number of evaluation
+  rounds owns one instance and changes no other, a lease cannot be returned
+  twice, a native failure in any round poisons it, and only healthy, small
+  instances are cached for reuse.
 
 Each model was mutation-tested: breaking any of these rules fails a law. The
 laws are about models and pure Bend code. **Nothing proves that the C bridge
@@ -174,10 +175,10 @@ its evidence:
 | Invariant | Evidence |
 |---|---|
 | Python API only while attached, never during evaluation | Model proved (`native_effect_rejected`, `native_only_leaves`); C asserts attachment (and the GIL on GIL builds) at every boundary |
-| Every call returns attached, including after native failures | Model proved (`native_returns_attached`, `invocation_returns_attached`); C's `setjmp` placement trusted |
+| Every call returns attached, including after native failures | Model proved for any slot, rounds and outcomes (`native_returns_attached`, `invocation_returns_attached`); C's `setjmp` placement trusted |
 | One call per runtime instance | Model proved (`acquisition_requires_available`, `leased_invocation_rejected`, `double_return_rejected`); C's pool mutex trusted; concurrency test |
 | A native failure affects only its instance | Model proved (`failure_isolated`); C unmaps poisoned instances; test |
-| Failed or large instances are never reused | Model proved (`reusable_requires_*`); test for memory release |
+| Failed or large instances are never reused | Model proved (`failure_poisons_lease`, `reusable_requires_*`); test for memory release |
 | Wrong arity is a `TypeError` | Proved for the parsers and wrappers (`*_exact_arity`, `*_complete`, `*_rejected`); keyword rejection tested |
 | Accidental forged or stale handles are detected | Sealing in C; tests. Rejection is probabilistic: 32-bit collisions remain possible. Hostile Bend code can import its own C |
 | Exports cannot capture variables | Checked by C at import; test |

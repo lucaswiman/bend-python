@@ -5,18 +5,18 @@ law identity:
   for +x: U32
   {Arithmetic.identity(x) == x : U32}
 
-law square:
-  for +x: U32
-  {Arithmetic.square(x) == (x * x : U32) : U32}
+# README's example law: U32 arithmetic wraps, and the build proves it.
+law square_wraps:
+  {Arithmetic.square(65536) == 0 : U32}
 
 law increment:
   for +x: U32
   {Arithmetic.increment(x) == (x + 1 : U32) : U32}
 
-law add:
-  for +x: U32
-  for +y: U32
-  {Arithmetic.add(x, y) == (x + y : U32) : U32}
+law add_comm:
+  for x: U32
+  for y: U32
+  {Arithmetic.add(x, y) == Arithmetic.add(y, x) : U32}
 
 law flip_involution:
   for +x: Bool

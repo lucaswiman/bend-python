@@ -139,6 +139,17 @@ class NativeBindingsTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             bend_example.kwargs(1)
 
+    def test_c_callers_keyword_dict_is_not_shared(self):
+        import ctypes
+
+        call = ctypes.pythonapi.PyObject_Call
+        call.restype = ctypes.py_object
+        call.argtypes = [ctypes.py_object] * 3
+        keywords = {"value": 1}
+        result = call(bend_example.kwargs, (), keywords)
+        self.assertEqual(result, keywords)
+        self.assertIsNot(result, keywords)
+
     def test_typed_adapters(self):
         self.assertEqual(bend_example.add(12, 30), 42)
         self.assertEqual(bend_example.add(U32_MAX, 2), 1)

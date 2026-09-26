@@ -546,6 +546,20 @@ setup(name="mixed", ext_modules=[BendExtension("module", "module.bend"),
                     self.assertEqual(future.result(), [directory / "bend"])
 
 
+class PinnedCompilerTests(unittest.TestCase):
+    def test_every_bend_download_uses_the_same_release_and_checksum(self):
+        sys.path.insert(0, str(ROOT / "src"))
+        self.addCleanup(sys.path.remove, str(ROOT / "src"))
+        from bend_python.build import BEND_RELEASE
+
+        url, digest = BEND_RELEASE
+        for path in ("scripts/bootstrap.sh", "docker/Dockerfile"):
+            text = (ROOT / path).read_text()
+            with self.subTest(path=path):
+                self.assertIn(url, text)
+                self.assertIn(digest, text)
+
+
 class VendorTests(unittest.TestCase):
     def setUp(self):
         sys.path.insert(0, str(ROOT / "src"))

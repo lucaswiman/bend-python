@@ -170,18 +170,30 @@ law reusable_requires_cache_space:
 
 # Whole invocations: the thread-state and lease models together.
 
+# From any idle slot, an invocation with any number of rounds, detach policy,
+# and native outcomes returns attached, leaving only its own slot updated.
 law invocation_returns_attached:
-  for rest: List<&2, Thread.Context>
-  for detach: Bool
-  for outcome: Thread.Outcome
-  for small_heap: Bool
-  for cache_space: Bool
-  {Thread.run_session(Thread.invocation(0n, detach, outcome, small_heap, cache_space), Thread.Session{Thread.Attached{}, Thread.Idle{} <> rest}) == Some{Thread.Session{Thread.Attached{}, Thread.completion(outcome, small_heap, cache_space) <> rest}} : Maybe<Thread.Session>}
+  for +pool: List<&2, Thread.Context>
+  for +slot: Nat
+  for +detach: Bool
+  for +outcomes: List<&2, Thread.Outcome>
+  for +small_heap: Bool
+  for +cache_space: Bool
+  for +free: {Thread.available(pool, slot) == True{} : Bool}
+  {Thread.run_session(Thread.invocation(slot, detach, outcomes, small_heap, cache_space), Thread.Session{Thread.Attached{}, pool}) == Some{Thread.Session{Thread.Attached{}, Thread.finish(pool, slot, Thread.health(outcomes), small_heap, cache_space)}} : Maybe<Thread.Session>}
 
 law leased_invocation_rejected:
-  for rest: List<&2, Thread.Context>
+  for pool: List<&2, Thread.Context>
+  for slot: Nat
   for detach: Bool
-  for outcome: Thread.Outcome
+  for outcomes: List<&2, Thread.Outcome>
   for small_heap: Bool
   for cache_space: Bool
-  {Thread.run_session(Thread.invocation(0n, detach, outcome, small_heap, cache_space), Thread.Session{Thread.Attached{}, Thread.Leased{} <> rest}) == None{} : Maybe<Thread.Session>}
+  for busy: {Thread.available(pool, slot) == False{} : Bool}
+  {Thread.run_session(Thread.invocation(slot, detach, outcomes, small_heap, cache_space), Thread.Session{Thread.Attached{}, pool}) == None{} : Maybe<Thread.Session>}
+
+# A native failure in any round poisons the lease, so it is never cached.
+law failure_poisons_lease:
+  for before: List<&2, Thread.Outcome>
+  for after: List<&2, Thread.Outcome>
+  {Thread.health(List.append(&2, Thread.Outcome, before, Thread.Failed{} <> after)) == Thread.Failed{} : Thread.Outcome}

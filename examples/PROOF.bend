@@ -5,14 +5,14 @@ import ./arithmetic.bend as Arithmetic
 def Laws.identity(x):
   {==}
 
-def Laws.square(x):
+def Laws.square_wraps():
   {==}
 
 def Laws.increment(x):
   {==}
 
-def Laws.add(x, y):
-  {==}
+def Laws.add_comm(x, y):
+  U32.add_comm(x, y)
 
 def Laws.flip_involution(x):
   match x:

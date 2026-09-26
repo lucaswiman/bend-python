@@ -59,17 +59,6 @@ def Laws.accepted_effect_attached(state, next, accepted):
     case Thread.DetachedNative{}:
       Empty.absurd({Thread.DetachedNative{} == Thread.Attached{} : Thread.State}, none_not_some(next, accepted))
 
-def Laws.native_effect_rejected(state, native):
-  match state:
-    case Thread.Attached{}:
-      not_true({Some{Thread.Attached{}} == None{} : Maybe<Thread.State>}, native)
-    case Thread.Detached{}:
-      {==}
-    case Thread.AttachedNative{}:
-      {==}
-    case Thread.DetachedNative{}:
-      {==}
-
 def Laws.native_only_leaves(state, operation, native, staying):
   match state operation:
     case Thread.Attached{} op:
@@ -104,6 +93,10 @@ def Laws.native_only_leaves(state, operation, native, staying):
       {==}
     case Thread.DetachedNative{} Thread.ReturnLease{_, _, _, _}:
       {==}
+
+# A Python effect is not Leave, so this is a special case of native_only_leaves.
+def Laws.native_effect_rejected(state, native):
+  Laws.native_only_leaves(state, Thread.PythonEffect{}, native, {==})
 
 # Attachment
 
@@ -308,16 +301,62 @@ def Laws.reusable_requires_cache_space(outcome, small_heap, cache_space, reusabl
 
 # Whole invocations
 
-def Laws.invocation_returns_attached(rest, detach, outcome, small_heap, cache_space):
-  match detach:
-    case True{}:
+# Rounds start and end attached and never touch the pool.
+def rounds_attached(detach: Bool, outcomes: List<&2, Thread.Outcome>, -rest: List<Thread.Operation>, -pool: List<&2, Thread.Context>)
+  -> {Thread.run_session(List.append(&1, Thread.Operation, Thread.rounds(detach, outcomes), rest), Thread.Session{Thread.Attached{}, pool}) == Thread.run_session(rest, Thread.Session{Thread.Attached{}, pool}) : Maybe<Thread.Session>}:
+  match detach outcomes:
+    case _ Nil{}:
       {==}
-    case False{}:
+    case True{} _ <> tail:
+      rounds_attached(True{}, tail, rest, pool)
+    case False{} _ <> tail:
+      rounds_attached(False{}, tail, rest, pool)
+
+# Returning a lease overwrites the Leased mark it was acquired with.
+def set_twice(pool: List<&2, Thread.Context>, slot: Nat, -first: Thread.Context, -second: Thread.Context)
+  -> {List.set(&2, Thread.Context, List.set(&2, Thread.Context, pool, slot, first), slot, second) == List.set(&2, Thread.Context, pool, slot, second) : List<&2, Thread.Context>}:
+  match pool slot:
+    case [] _:
+      {==}
+    case _ <> _ 0n:
+      {==}
+    case head <> tail 1n+pred:
+      %set_twice(tail, pred, first, second) : {head <> List.set(&2, Thread.Context, List.set(&2, Thread.Context, tail, pred, first), pred, second) == head <> _ : List<&2, Thread.Context>}
       {==}
 
-def Laws.leased_invocation_rejected(rest, detach, outcome, small_heap, cache_space):
-  match detach:
-    case True{}:
+# The operations after acquisition, and the session an invocation should end in.
+def after_acquire(slot: Nat, detach: Bool, +outcomes: List<&2, Thread.Outcome>, small_heap: Bool, cache_space: Bool) -> List<Thread.Operation>:
+  Thread.Restore{} <> List.append(&1, Thread.Operation, Thread.rounds(detach, outcomes),
+    Thread.return_call(slot, Thread.health(outcomes), small_heap, cache_space))
+
+def finished(pool: List<&2, Thread.Context>, slot: Nat, outcomes: List<&2, Thread.Outcome>, small_heap: Bool, cache_space: Bool) -> Maybe<Thread.Session>:
+  Some{Thread.Session{Thread.Attached{}, Thread.finish(pool, slot, Thread.health(outcomes), small_heap, cache_space)}}
+
+def returned(slot: Nat, +outcomes: List<&2, Thread.Outcome>, small_heap: Bool, cache_space: Bool) -> List<Thread.Operation>:
+  Thread.return_call(slot, Thread.health(outcomes), small_heap, cache_space)
+
+def Laws.invocation_returns_attached(pool, slot, detach, outcomes, small_heap, cache_space, free):
+  %Equal.sym(Bool, Thread.available(pool, slot), True{}, free) : {Maybe.bind(&1, Thread.Session, Thread.Session, Thread.detached_with(Thread.acquire_if(_, pool, slot)), next => Thread.run_session(after_acquire(slot, detach, outcomes, small_heap, cache_space), next)) == finished(pool, slot, outcomes, small_heap, cache_space) : Maybe<Thread.Session>}
+  %Equal.sym(Maybe<Thread.Session>,
+    Thread.run_session(List.append(&1, Thread.Operation, Thread.rounds(detach, outcomes), returned(slot, outcomes, small_heap, cache_space)), Thread.Session{Thread.Attached{}, Thread.reserve(pool, slot)}),
+    Thread.run_session(returned(slot, outcomes, small_heap, cache_space), Thread.Session{Thread.Attached{}, Thread.reserve(pool, slot)}),
+    rounds_attached(detach, outcomes, returned(slot, outcomes, small_heap, cache_space), Thread.reserve(pool, slot))) : {_ == finished(pool, slot, outcomes, small_heap, cache_space) : Maybe<Thread.Session>}
+  %Equal.sym(Bool, Thread.returnable(Thread.reserve(pool, slot), slot), True{}, Laws.reserved_returnable(pool, slot, free)) : {Maybe.bind(&1, Thread.Session, Thread.Session, Thread.detached_with(Thread.finish_if(_, Thread.reserve(pool, slot), slot, Thread.health(outcomes), small_heap, cache_space)), next => Thread.run_session([Thread.Restore{}], next)) == finished(pool, slot, outcomes, small_heap, cache_space) : Maybe<Thread.Session>}
+  %Equal.sym(List<&2, Thread.Context>,
+    List.set(&2, Thread.Context, Thread.reserve(pool, slot), slot, Thread.completion(Thread.health(outcomes), small_heap, cache_space)),
+    List.set(&2, Thread.Context, pool, slot, Thread.completion(Thread.health(outcomes), small_heap, cache_space)),
+    set_twice(pool, slot, Thread.Leased{}, Thread.completion(Thread.health(outcomes), small_heap, cache_space))) : {Some{Thread.Session{Thread.Attached{}, _}} == finished(pool, slot, outcomes, small_heap, cache_space) : Maybe<Thread.Session>}
+  {==}
+
+def Laws.leased_invocation_rejected(pool, slot, detach, outcomes, small_heap, cache_space, busy):
+  %Equal.sym(Bool, Thread.available(pool, slot), False{}, busy) : {Maybe.bind(&1, Thread.Session, Thread.Session, Thread.detached_with(Thread.acquire_if(_, pool, slot)), next => Thread.run_session(after_acquire(slot, detach, outcomes, small_heap, cache_space), next)) == None{} : Maybe<Thread.Session>}
+  {==}
+
+def Laws.failure_poisons_lease(before, after):
+  match before:
+    case []:
       {==}
-    case False{}:
+    case Thread.Succeeded{} <> tail:
+      Laws.failure_poisons_lease(tail, after)
+    case Thread.Failed{} <> _:
       {==}

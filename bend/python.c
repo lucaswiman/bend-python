@@ -784,7 +784,9 @@ static PyObject* bp_call_python(PyObject* self, PyObject* args, PyObject* kwargs
   for (size_t i = 0; i < call.nargs; ++i) {
     if (!bp_add(&call, Py_NewRef(PyTuple_GetItem(args, i)))) goto fail;
   }
-  if (!bp_add(&call, kwargs ? Py_NewRef(kwargs) : PyDict_New())) goto fail;
+  // C callers (PyObject_Call) may pass their own dict; like a Python **kwargs
+  // function, Bend gets a fresh one it may mutate or return.
+  if (!bp_add(&call, kwargs ? PyDict_Copy(kwargs) : PyDict_New())) goto fail;
   return bp_run(&call, BP_START);
 fail:
   for (size_t i = 0; i < call.count; ++i) Py_DECREF(call.objects[i]);
