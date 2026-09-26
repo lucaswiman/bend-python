@@ -78,7 +78,7 @@ def attribute(request: Python.Call) -> IO(Python.Object):
 def length_value(value: Python.Object) -> IO(Python.Object):
   do IO<Python.Object>:
     n : Nat <- Python.len(value)
-    Python.from_u32(U32.from_nat(n))
+    Python.from_nat(n)
 
 def length(request: Python.Call) -> IO(Python.Object):
   do IO<Python.Object>:

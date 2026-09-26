@@ -8,10 +8,12 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 
 from setuptools import Extension
 from setuptools.command.build_ext import build_ext
 from setuptools.command.build_py import build_py
+from setuptools.errors import CompileError, ExecError, PlatformError
 
 from . import BEND_VERSION
 from .library import library_path
@@ -49,11 +51,40 @@ def _compiler():
     local = Path(__file__).resolve().parents[2] / ".tools/bend/bin/bend"
     bend = os.environ.get("BEND") or (str(local) if local.exists() else shutil.which("bend"))
     if not bend:
-        raise RuntimeError(f"Install Bend {BEND_VERSION} or set BEND to its executable")
-    version = subprocess.check_output([bend, "version"], text=True).strip()
+        raise ExecError(f"Install Bend {BEND_VERSION} or set BEND to its executable")
+    try:
+        version = subprocess.run([bend, "version"], text=True, capture_output=True).stdout.strip()
+    except OSError as error:
+        raise ExecError(f"Cannot run Bend compiler {bend!r}: {error}") from None
     if version != f"bend {BEND_VERSION}":
-        raise RuntimeError(f"Expected bend {BEND_VERSION}, got {version!r}")
+        raise ExecError(f"Expected bend {BEND_VERSION} at {bend!r}, got {version!r}")
     return bend
+
+
+def _bridge_libraries(source):
+    """Directories of the bend-python libraries a program reaches by relative imports.
+
+    The build must prove the library it compiles: a project's vendored copy,
+    which ``vendor`` preserves when modified, not necessarily the SDK's own.
+    """
+    pending, seen, found = [Path(source).resolve()], set(), []
+    while pending:
+        path = pending.pop()
+        if path in seen or not path.is_file():
+            continue
+        seen.add(path)
+        if path.name == "python.bend" and path.with_name("python.c").is_file():
+            found.append(path.parent)
+        for match in re.finditer(r"^\s*import\s+(\.\.?/\S+\.bend)\b", path.read_text(), re.M):
+            pending.append((path.parent / match[1]).resolve())
+    return found
+
+
+def _bend(bend, *args, failure):
+    # Bend prints its own diagnostic; end the build with a setuptools error
+    # (reported as "error: ...") rather than a CalledProcessError traceback.
+    if subprocess.run([bend, *args]).returncode != 0:
+        raise CompileError(f"{failure} (see Bend output above)")
 
 
 def _patch_runtime(source, name):
@@ -75,7 +106,9 @@ static u32            pool_size;'''
         source, re.DOTALL,
     ))
     if len(context_blocks) != 1:
-        raise RuntimeError("Bend bridge runtime context declaration is missing or duplicated")
+        raise CompileError(
+            "Bend program must import the bend-python library (python.bend) exactly once"
+        )
     context_block = context_blocks[0]
     contexts = context_block[1]
     source = source[:context_block.start()] + source[context_block.end():]
@@ -107,7 +140,7 @@ static u32            pool_size;'''
         ("#define _GNU_SOURCE\n", "#ifndef _GNU_SOURCE\n#define _GNU_SOURCE\n#endif\n"),
     ]:
         if source.count(old) != 1:
-            raise RuntimeError("Bend runtime changed; refusing an unreviewed embedding patch")
+            raise CompileError("Bend runtime changed; refusing an unreviewed embedding patch")
         source = source.replace(old, new)
     # The tail-call ABI forwards unused registers. Initialize those registers
     # rather than passing indeterminate C values between generated segments.
@@ -119,7 +152,7 @@ static u32            pool_size;'''
         source,
     )
     if count != 1:
-        raise RuntimeError("Bend register layout changed")
+        raise CompileError("Bend register layout changed")
     prefix = (
         "#define PY_SSIZE_T_CLEAN\n#include <Python.h>\n"
         "static void bendpy_panic(const char*) __attribute__((noreturn));\n"
@@ -132,45 +165,57 @@ static u32            pool_size;'''
 class BendBuildExt(build_ext):
     """Proof-check, emit C, and compile BendExtension instances with Clang."""
 
+    # build_ext --parallel shares one compiler object between threads; an
+    # unserialized swap could restore another Bend extension's driver mid-build.
+    _compiler_swap = threading.Lock()
+
     @contextmanager
     def _clang(self):
         """Compile with Clang without changing the environment or other extensions."""
-        compiler = self.compiler
-        commands = {name: getattr(compiler, name, None) for name in ("compiler_so", "linker_so")}
-        if not commands["compiler_so"] or not commands["linker_so"]:
-            raise RuntimeError("Bend extensions require a Unix Clang compiler")
-        replacements = {}
-        if "CC" not in os.environ:
-            # Replace only the driver; keep sysconfig's flags such as -pthread and -shared.
-            clang = shutil.which("clang")
-            if not clang:
-                raise RuntimeError("Bend generated C requires Clang; install it or set CC=clang")
-            replacements = {name: [clang, *command[1:]] for name, command in commands.items()}
-        driver = replacements.get("compiler_so", commands["compiler_so"])
-        version = subprocess.check_output([*driver, "--version"], text=True)
-        if "clang" not in version.lower():
-            raise RuntimeError("Bend generated C requires Clang; set CC=clang")
-        compiler.set_executables(**replacements)
-        try:
-            yield
-        finally:
-            compiler.set_executables(**commands)
+        with self._compiler_swap:
+            compiler = self.compiler
+            commands = {name: getattr(compiler, name, None) for name in ("compiler_so", "linker_so")}
+            if not commands["compiler_so"] or not commands["linker_so"]:
+                raise PlatformError("Bend extensions require a Unix Clang compiler")
+            replacements = {}
+            if "CC" not in os.environ:
+                # Replace only the driver; keep sysconfig's flags such as -pthread and -shared.
+                clang = shutil.which("clang")
+                if not clang:
+                    raise PlatformError("Bend generated C requires Clang; install it or set CC=clang")
+                replacements = {name: [clang, *command[1:]] for name, command in commands.items()}
+            driver = replacements.get("compiler_so", commands["compiler_so"])
+            try:
+                version = subprocess.run([*driver, "--version"], text=True, capture_output=True).stdout
+            except OSError:
+                version = ""
+            if "clang" not in version.lower():
+                raise PlatformError(f"Bend generated C requires Clang, not {driver[0]!r}; set CC=clang")
+            compiler.set_executables(**replacements)
+            try:
+                yield
+            finally:
+                compiler.set_executables(**commands)
 
     def build_extension(self, extension):
         if not isinstance(extension, BendExtension):
             return super().build_extension(extension)
         if sys.platform != "linux":
-            raise RuntimeError("The pinned Bend embedding runtime currently supports Linux only")
+            raise PlatformError("The pinned Bend embedding runtime currently supports Linux only")
         bend = _compiler()
-        proofs = list(extension.bend_proofs)
-        library = library_path()
-        proofs.insert(0, str(library / "PROOF.bend"))
-        proofs.insert(1, str(library / "THREAD_PROOF.bend"))
+        libraries = _bridge_libraries(extension.bend_source) or [library_path()]
+        proofs = [str(library / proof) for library in libraries
+                  for proof in ("PROOF.bend", "THREAD_PROOF.bend")]
+        proofs.extend(extension.bend_proofs)
+        for kind, path in [("source", extension.bend_source), *(("proof", p) for p in proofs)]:
+            if not Path(path).is_file():
+                raise CompileError(f"Bend {kind} file not found: {path}")
         for proof in dict.fromkeys(proofs):
-            subprocess.run([bend, proof, "--check-only"], check=True)
+            _bend(bend, proof, "--check-only", failure=f"Bend proof check failed: {proof}")
         generated = Path(self.build_temp) / (extension.name + ".c")
         generated.parent.mkdir(parents=True, exist_ok=True)
-        subprocess.run([bend, extension.bend_source, "-o", str(generated)], check=True)
+        _bend(bend, extension.bend_source, "-o", str(generated),
+              failure=f"Bend compilation failed: {extension.bend_source}")
         generated.write_text(_patch_runtime(generated.read_text(), extension.name))
         sources = extension.sources
         extension.sources = [str(generated)]

@@ -70,6 +70,10 @@ def list(values: List<Object>) -> IO(Object):
 def len(value: Object) -> IO(Nat):
   import "./python.c"
 
+# Exact, unlike U32.from_nat, which wraps lengths and counts past 2^32.
+def from_nat(value: Nat) -> IO(Object):
+  import "./python.c"
+
 def type_error(-A: Type, message: String) -> IO(A):
   import "./python.c"
 

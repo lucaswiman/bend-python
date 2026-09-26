@@ -6,7 +6,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
+import unittest.mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -81,7 +83,7 @@ probe.bp_test_arm()
 
 class BuildTests(unittest.TestCase):
     def build(self, module=None, break_proof=False, omit_thread_proof=False,
-              native_rendezvous=False):
+              native_rendezvous=False, break_vendored_library=False):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         directory = Path(temporary.name)
@@ -100,6 +102,17 @@ class BuildTests(unittest.TestCase):
             arithmetic.write_text(arithmetic.read_text().replace("x * x", "x + 1"))
         if omit_thread_proof:
             (directory / "bend/THREAD_PROOF.bend").unlink()
+        if break_vendored_library:
+            # A modified vendored copy that vendor() preserves; the SDK copy stays sound.
+            shutil.copytree(directory / "bend", directory / "examples/bend")
+            library = directory / "examples/bend/python.bend"
+            sound = "    case [value]:\n      Some{value}\n"
+            self.assertEqual(library.read_text().count(sound), 1)
+            library.write_text(library.read_text().replace(sound, "    case [value]:\n      None{}\n"))
+            setup = directory / "examples/setup.py"
+            setup.write_text(setup.read_text().replace(
+                'vendor(Path(__file__).parent / "bend", force=True)', 'pass  # keep the modified copy',
+            ))
         if native_rendezvous:
             shim = directory / "bend/python.c"
             source = shim.read_text()
@@ -128,16 +141,42 @@ class BuildTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def assertCleanBuildError(self, result, message):
+        # Bend's diagnostic is printed, then setuptools reports "error: ..."
+        # instead of a CalledProcessError traceback.
+        output = result.stdout + result.stderr
+        self.assertIn(f"error: {message}", output)
+        self.assertNotIn("CalledProcessError", output)
+        self.assertNotIn("Traceback", output)
+
     def test_false_law_stops_build(self):
         directory, result = self.build(break_proof=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("expected", result.stdout + result.stderr)
+        self.assertCleanBuildError(result, "Bend proof check failed: PROOF.bend (see Bend output above)")
         self.assertFalse(list(directory.rglob("*.so")))
 
     def test_missing_thread_proof_stops_build(self):
         directory, result = self.build(omit_thread_proof=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("THREAD_PROOF.bend", result.stdout + result.stderr)
+        self.assertCleanBuildError(result, "Bend proof file not found: ")
+        self.assertFalse(list(directory.rglob("*.so")))
+
+    def test_modified_vendored_library_is_the_one_proved(self):
+        directory, result = self.build(break_vendored_library=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("singleton_roundtrip", result.stdout + result.stderr)
+        self.assertCleanBuildError(result, f"Bend proof check failed: {directory / 'examples/bend/PROOF.bend'}")
+        self.assertFalse(list(directory.rglob("*.so")))
+
+    def test_ill_typed_program_stops_build(self):
+        directory, result = self.build('''
+def main() -> IO(Unit):
+  Python.export_u32(~(x => True{}), "wrong", False{})
+''')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertCleanBuildError(result, "Bend compilation failed: module.bend (see Bend output above)")
         self.assertFalse(list(directory.rglob("*.so")))
 
     def test_native_evaluator_calls_overlap_with_distinct_contexts(self):
@@ -270,6 +309,115 @@ except ValueError as error:
 else:
     raise AssertionError("duplicate exports accepted")
 ''')
+
+
+class RecordingCompiler:
+    def __init__(self):
+        self.compiler_so = ["gcc", "-fPIC"]
+        self.linker_so = ["gcc", "-shared"]
+
+    def set_executables(self, **commands):
+        for name, command in commands.items():
+            setattr(self, name, command)
+
+
+@unittest.skipUnless(shutil.which("clang"), "requires clang")
+class ClangSwapTests(unittest.TestCase):
+    def test_parallel_builds_do_not_interleave_compiler_swaps(self):
+        sys.path.insert(0, str(ROOT / "src"))
+        self.addCleanup(sys.path.remove, str(ROOT / "src"))
+        from setuptools import Distribution
+        from bend_python.build import BendBuildExt
+        command = BendBuildExt(Distribution())
+        command.compiler = RecordingCompiler()
+        first_in, second_in, first_out = threading.Event(), threading.Event(), threading.Event()
+        seen = []
+
+        def first():
+            with command._clang():
+                first_in.set()
+                # Without serialization, the second swap happens now and this
+                # exit restores gcc underneath it.
+                second_in.wait(0.5)
+            first_out.set()
+
+        def second():
+            first_in.wait(5)
+            with command._clang():
+                second_in.set()
+                first_out.wait(5)
+                seen.append(command.compiler.compiler_so[0])
+
+        environment = {key: value for key, value in os.environ.items() if key != "CC"}
+        with unittest.mock.patch.dict(os.environ, environment, clear=True):
+            threads = [threading.Thread(target=first), threading.Thread(target=second)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+        self.assertEqual(seen, [shutil.which("clang")])
+        self.assertEqual(command.compiler.compiler_so, ["gcc", "-fPIC"])
+        self.assertEqual(command.compiler.linker_so, ["gcc", "-shared"])
+
+
+class VendorTests(unittest.TestCase):
+    def setUp(self):
+        sys.path.insert(0, str(ROOT / "src"))
+        self.addCleanup(sys.path.remove, str(ROOT / "src"))
+        from bend_python import library_path, vendor
+        self.library, self.vendor = library_path(), vendor
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.directory = Path(temporary.name)
+
+    def test_vendor_copies_and_accepts_identical_files(self):
+        target = self.directory / "bend"
+        self.assertEqual(self.vendor(target), target.resolve())
+        self.assertEqual((target / "python.c").read_bytes(), (self.library / "python.c").read_bytes())
+        (target / "unrelated.bend").write_text("kept")
+        self.vendor(target)
+        self.assertEqual((target / "unrelated.bend").read_text(), "kept")
+
+    def test_vendor_never_writes_through_symlinks(self):
+        target = self.directory / "bend"
+        target.mkdir()
+        outside = self.directory / "outside.c"
+        shared = self.directory / "shared.c"
+        shared.write_text("shared")
+        (target / "python.c").symlink_to(outside)  # dangling
+        (target / "python.bend").symlink_to(shared)
+        with self.assertRaises(FileExistsError) as raised:
+            self.vendor(target)
+        self.assertIn("python.c", str(raised.exception))
+        self.assertIn("python.bend", str(raised.exception))
+        self.assertFalse(outside.exists())
+        self.vendor(target, force=True)
+        self.assertFalse(outside.exists())
+        self.assertEqual(shared.read_text(), "shared")
+        for name in ("python.c", "python.bend"):
+            self.assertFalse((target / name).is_symlink())
+            self.assertEqual((target / name).read_bytes(), (self.library / name).read_bytes())
+
+    def test_vendor_accepts_symlinks_to_the_library(self):
+        target = self.directory / "bend"
+        target.mkdir()
+        (target / "python.c").symlink_to(self.library / "python.c")
+        self.vendor(target)
+        self.assertTrue((target / "python.c").is_symlink())
+        linked = self.directory / "linked"
+        linked.symlink_to(self.library, target_is_directory=True)
+        self.assertEqual(self.vendor(linked, force=True), self.library.resolve())
+
+    def test_vendor_refuses_modified_files_and_directories(self):
+        target = self.directory / "bend"
+        target.mkdir()
+        (target / "python.bend").write_text("modified")
+        (target / "python.c").mkdir()
+        with self.assertRaises(FileExistsError):
+            self.vendor(target)
+        self.assertEqual((target / "python.bend").read_text(), "modified")
+        with self.assertRaises(IsADirectoryError):
+            self.vendor(target, force=True)
 
 
 if __name__ == "__main__":

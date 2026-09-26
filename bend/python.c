@@ -331,6 +331,11 @@ static void bp_decode(Env e, BpCall* call) {
 #ifdef CID(from_f32)
     case CID(from_f32): break;
 #endif
+#ifdef CID(from_nat)
+    case CID(from_nat):
+      if ((u64)f[0] > NAT_IMM) bendpy_panic("unexpected Bend Nat representation");
+      break;
+#endif
 #ifdef CID(none)
     case CID(none): break;
 #endif
@@ -557,6 +562,9 @@ static bool bp_effect(BpCall* call) {
 #endif
 #ifdef CID(from_u32)
     case CID(from_u32): return bp_add(call, PyLong_FromUnsignedLong((u32)f[0]));
+#endif
+#ifdef CID(from_nat)
+    case CID(from_nat): return bp_add(call, PyLong_FromUnsignedLongLong((u64)f[0]));
 #endif
 #ifdef CID(to_f32)
     case CID(to_f32): {

@@ -198,6 +198,23 @@ class NativeBindingsTests(unittest.TestCase):
                     function(*args, **kwargs)
         self.assertEqual(bend_example.square(12), 144)
 
+    def test_lengths_are_exact_beyond_u32(self):
+        class Sized:
+            def __init__(self, size):
+                self.size = size
+
+            def __len__(self):
+                return self.size
+
+        # Python.from_nat converts exactly; U32.from_nat would wrap 2^32 to 0.
+        for size in (0, U32_MAX, U32_MAX + 1, 1 << 40, (1 << 48) - 1):
+            with self.subTest(size=size):
+                self.assertEqual(bend_example.length(Sized(size)), size)
+        for size in (1 << 48, sys.maxsize):
+            with self.assertRaises(OverflowError):
+                bend_example.length(Sized(size))
+        self.assertEqual(bend_example.length([1]), 1)
+
     def test_exports_behave_like_module_functions(self):
         for name in ("square", "echo", "make_dict"):
             with self.subTest(name=name):
@@ -297,6 +314,23 @@ class NativeBindingsTests(unittest.TestCase):
         del result
         gc.collect()
         self.assertIsNone(reference())
+
+    def test_finalizers_released_by_the_arena_can_reenter(self):
+        finalized = []
+
+        class Reenter:
+            def __del__(self):
+                finalized.append(bend_example.square(3) + bend_example.call(lambda: 1))
+
+        for _ in range(100):
+            bend_example.echo(Reenter())
+            with self.assertRaises(TypeError):
+                bend_example.square(Reenter())
+            mapping = {"key": Reenter()}
+            # The replaced value is finalized inside the set_item effect.
+            bend_example.setitem(mapping, "key", None)
+        gc.collect()
+        self.assertEqual(finalized, [10] * 300)
 
     def test_calls_from_multiple_python_threads(self):
         def worker(seed):

@@ -1,5 +1,6 @@
 """Find or vendor the Bend library shipped with the Python build helper."""
 
+import os
 from pathlib import Path
 import shutil
 
@@ -23,23 +24,29 @@ def vendor(destination="bend", *, force=False):
     """Copy the library into a project for Bend's relative imports.
 
     Existing identical files are accepted. Different files are preserved unless
-    ``force=True``; unrelated files in the directory are always preserved.
+    ``force=True``; unrelated files in the directory are always preserved. A
+    symlink is never written through: it must already open the library file, or
+    it is a conflict that ``force=True`` replaces with a regular file.
     """
     source = library_path()
     target = Path(destination)
     files = sorted(path for path in source.iterdir() if path.suffix in {".bend", ".c"})
-    conflicts = [
-        target / path.name for path in files
-        if (target / path.name).exists()
-        and (not (target / path.name).is_file()
-             or (target / path.name).read_bytes() != path.read_bytes())
-    ]
+
+    def current(path):
+        existing = target / path.name
+        if existing.is_symlink():
+            return existing.resolve() == path.resolve()
+        return existing.is_file() and existing.read_bytes() == path.read_bytes()
+
+    stale = [path for path in files if not current(path)]
+    conflicts = [target / path.name for path in stale if os.path.lexists(target / path.name)]
     if conflicts and not force:
         names = ", ".join(str(path) for path in conflicts)
         raise FileExistsError(f"Refusing to replace modified library files: {names}; use --force")
     target.mkdir(parents=True, exist_ok=True)
-    for path in files:
+    for path in stale:
         destination_file = target / path.name
-        if destination_file.resolve() != path.resolve():
-            shutil.copyfile(path, destination_file)
+        if destination_file.is_symlink():
+            destination_file.unlink()
+        shutil.copyfile(path, destination_file)
     return target.resolve()
