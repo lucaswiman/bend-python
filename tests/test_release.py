@@ -43,7 +43,10 @@ class ReleaseCheckTests(unittest.TestCase):
         unreleased_only = CHANGELOG.replace("## [1.2.0] - 2026-09-25", "## [1.2.0]")
         for changelog in (CHANGELOG.replace("1.2.0", "1.3.0"), unreleased_only):
             with self.subTest(changelog=changelog[:80]):
-                self.assertIn("no '## [1.2.0] - YYYY-MM-DD' section", " ".join(self.errors(changelog=changelog)))
+                self.assertIn(
+                    "no '## [1.2.0] - YYYY-MM-DD' section",
+                    " ".join(self.errors(changelog=changelog)),
+                )
 
     def test_section_must_list_changes(self):
         empty = CHANGELOG.replace("### Added\n\n- A feature.\n", "")
