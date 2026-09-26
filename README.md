@@ -221,3 +221,7 @@ project version and publish a GitHub release tagged `vX.Y.Z`; the
 checks both, then publishes the SDK to PyPI by trusted publishing, with
 provenance attestations. [`AGENTS.md`](https://github.com/lucaswiman/bend-python/blob/main/AGENTS.md)
 has notes for contributors and coding agents.
+
+## License
+
+[MIT](https://github.com/lucaswiman/bend-python/blob/main/LICENSE).

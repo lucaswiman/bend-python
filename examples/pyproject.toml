@@ -7,6 +7,7 @@ name = "bend-python-example"
 version = "0.1.0"
 description = "Executable example extension written in Bend with bend-python"
 requires-python = ">=3.10"
+license = "MIT"
 
 [tool.setuptools]
 packages = []
