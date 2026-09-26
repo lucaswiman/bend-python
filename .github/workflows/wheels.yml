@@ -1,0 +1,35 @@
+name: Linux wheels
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  manylinux:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python: [cp310-cp310, cp311-cp311, cp312-cp312, cp313-cp313, cp314-cp314, cp314-cp314t]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build compiler image
+        run: docker build --file docker/Dockerfile --tag bend-python-manylinux .
+      - name: Build, repair, and test installed wheel
+        run: |
+          mkdir -p wheelhouse
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            --env PYTHON_TAGS=${{ matrix.python }} \
+            --volume "$PWD:/io:ro" \
+            --volume "$PWD/wheelhouse:/wheelhouse" \
+            bend-python-manylinux
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.python }}-manylinux_x86_64
+          path: wheelhouse/*.whl
+          if-no-files-found: error

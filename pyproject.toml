@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=80"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bend-python"
+version = "0.1.0"
+description = "Bend-first native Python extensions and build helpers"
+readme = "README.md"
+requires-python = ">=3.10"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+bend_python = ["lib/*.bend", "lib/*.c"]
