@@ -381,17 +381,6 @@ else:
         )
 
 
-class RecordingCompiler:
-    def __init__(self):
-        self.compiler_so = ["gcc", "-fPIC"]
-        self.linker_so = ["gcc", "-shared"]
-
-    def set_executables(self, **commands):
-        for name, command in commands.items():
-            setattr(self, name, command)
-
-
-@unittest.skipUnless(shutil.which("clang"), "requires clang")
 class CompilerDownloadTests(unittest.TestCase):
     """The pinned compiler is fetched, verified, and cached without network access here."""
 
@@ -460,44 +449,101 @@ class CompilerDownloadTests(unittest.TestCase):
             self.build_module._compiler()
 
 
-class ClangSwapTests(unittest.TestCase):
-    def test_parallel_builds_do_not_interleave_compiler_swaps(self):
-        sys.path.insert(0, str(ROOT / "src"))
-        self.addCleanup(sys.path.remove, str(ROOT / "src"))
-        from setuptools import Distribution
+class ParallelBuildTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("gcc") and shutil.which("clang"), "requires gcc and clang")
+    def test_mixed_extensions_keep_their_compilers(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            (directory / "module.bend").write_text(
+                "import Base\nimport ./bend/python.bend as Python\n"
+                'def main() -> IO(Unit):\n  Python.export_u32(~(x => x), "identity", False{})\n'
+            )
+            (directory / "native.c").write_text(
+                "#include <Python.h>\n"
+                'static struct PyModuleDef module = {PyModuleDef_HEAD_INIT, "native", 0, -1};\n'
+                "PyMODINIT_FUNC PyInit_native(void) { return PyModule_Create(&module); }\n"
+            )
+            (directory / "setup.py").write_text("""
+import threading
+from setuptools import setup, Extension
+from bend_python import BendBuildExt, BendExtension
+entered, native_done = threading.Event(), threading.Event()
+class MixedBuild(BendBuildExt):
+    def build_extensions(self):
+        for name in ("compiler_so", "linker_so"):
+            self.compiler.set_executable(name, ["gcc", *getattr(self.compiler, name)[1:]])
+        # Newer setuptools runs commands through call; older ones through spawn.
+        method = "call" if hasattr(self.compiler, "call") else "spawn"
+        run = getattr(self.compiler, method)
+        def rendezvous(command, **kwargs):
+            if "-c" in command and any(str(arg).endswith("/module.c") for arg in command):
+                entered.set()
+                assert native_done.wait(300), "native build timed out"
+            return run(command, **kwargs)
+        setattr(self.compiler, method, rendezvous)
+        super().build_extensions()
+    def build_extension(self, extension):
+        if extension.name != "native":
+            return super().build_extension(extension)
+        assert entered.wait(300), "Bend build timed out"
+        try:
+            return super().build_extension(extension)
+        finally:
+            native_done.set()
+setup(name="mixed", ext_modules=[BendExtension("module", "module.bend"),
+      Extension("native", ["native.c"], extra_compile_args=["-fno-tree-loop-distribute-patterns"])],
+      cmdclass={"build_ext": MixedBuild})
+""")
+            environment = {key: value for key, value in os.environ.items() if key != "CC"}
+            environment.update(BEND=BEND, PYTHONPATH=str(ROOT / "src"))
+            result = subprocess.run(
+                [sys.executable, "setup.py", "build_ext", "--inplace", "--parallel=2"],
+                cwd=directory,
+                env=environment,
+                capture_output=True,
+                text=True,
+                timeout=600,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            subprocess.run(
+                [sys.executable, "-c", "import native, module; assert module.identity(42) == 42"],
+                cwd=directory,
+                check=True,
+                timeout=10,
+            )
 
-        from bend_python.build import BendBuildExt
+    def test_parallel_discovery_waits_for_complete_vendor_copy(self):
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError
 
-        command = BendBuildExt(Distribution())
-        command.compiler = RecordingCompiler()
-        first_in, second_in, first_out = threading.Event(), threading.Event(), threading.Event()
-        seen = []
+        from bend_python.build import _bridge_libraries
 
-        def first():
-            with command._clang():
-                first_in.set()
-                # Without serialization, the second swap happens now and this
-                # exit restores gcc underneath it.
-                second_in.wait(0.5)
-            first_out.set()
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            source = directory / "module.bend"
+            source.write_text("import ./bend/python.bend as Python\n")
+            copied, release = threading.Event(), threading.Event()
+            copyfile = shutil.copyfile
 
-        def second():
-            first_in.wait(5)
-            with command._clang():
-                second_in.set()
-                first_out.wait(5)
-                seen.append(command.compiler.compiler_so[0])
+            # Pause after python.bend is copied but before python.c is.
+            def pause_copy(source, destination, **kwargs):
+                result = copyfile(source, destination, **kwargs)
+                if Path(source).name == "python.bend":
+                    copied.set()
+                    self.assertTrue(release.wait(5))
+                return result
 
-        environment = {key: value for key, value in os.environ.items() if key != "CC"}
-        with unittest.mock.patch.dict(os.environ, environment, clear=True):
-            threads = [threading.Thread(target=first), threading.Thread(target=second)]
-            for thread in threads:
-                thread.start()
-            for thread in threads:
-                thread.join()
-        self.assertEqual(seen, [shutil.which("clang")])
-        self.assertEqual(command.compiler.compiler_so, ["gcc", "-fPIC"])
-        self.assertEqual(command.compiler.linker_so, ["gcc", "-shared"])
+            with unittest.mock.patch("shutil.copyfile", pause_copy), ThreadPoolExecutor(2) as pool:
+                first = pool.submit(_bridge_libraries, source)
+                try:
+                    self.assertTrue(copied.wait(5))
+                    second = pool.submit(_bridge_libraries, source)
+                    # Unserialized, it would already have returned without the library.
+                    with self.assertRaises(TimeoutError):
+                        second.result(timeout=0.5)
+                finally:
+                    release.set()
+                for future in (first, second):
+                    self.assertEqual(future.result(), [directory / "bend"])
 
 
 class VendorTests(unittest.TestCase):

@@ -321,6 +321,29 @@ class NativeBindingsTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             type(bend_example.square)()
 
+    @unittest.skipUnless(sysconfig.get_config_var("Py_GIL_DISABLED"), "requires free-threading")
+    def test_bytearray_conversion_is_a_snapshot(self):
+        import threading
+
+        size = 500_000
+        value = bytearray(size)
+        zeros, ones = bytes(size), b"\x01" * size
+        stop = threading.Event()
+
+        def writer():
+            while not stop.is_set():
+                value[:] = ones
+                value[:] = zeros
+
+        thread = threading.Thread(target=writer)
+        thread.start()
+        try:
+            for _ in range(20):
+                self.assertIn(bend_example.checksum(value), (0, size))
+        finally:
+            stop.set()
+            thread.join()
+
     @unittest.skipUnless(sys.platform == "linux", "reads /proc/self/statm")
     def test_idle_runtimes_do_not_retain_large_heaps(self):
         self.run_fresh_python("""

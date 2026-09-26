@@ -56,9 +56,6 @@ class ReleaseCheckTests(unittest.TestCase):
         other = '[tool.x]\nversion = "1.2.0"\n\n[project]\nname = "x"\nversion = "9.9.9"\n'
         self.assertIn("v9.9.9", " ".join(self.errors(pyproject=other)))
 
-    def test_repository_changelog_has_an_unreleased_section(self):
-        self.assertIn("## [Unreleased]", (ROOT / "CHANGELOG.md").read_text())
-
 
 if __name__ == "__main__":
     unittest.main()

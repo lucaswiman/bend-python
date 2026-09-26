@@ -51,7 +51,7 @@ law pair_exact_arity:
   {Python.arity(xs) == 2n : Nat}
 
 # Converses of the exact-arity laws: every list of the right length parses.
-# Together these characterize the pure parsers; the IO wrappers are not covered.
+# Together these characterize the pure parsers; the IO wrappers are covered below.
 law singleton_complete:
   for xs: List<Python.Object>
   for exact: {Python.arity(xs) == 1n : Nat}

@@ -75,15 +75,11 @@ def attribute(request: Python.Call) -> IO(Python.Object):
     values : Pair(Python.Object, Python.Object) <- Python.binary(request)
     attribute_values(values)
 
-def length_value(value: Python.Object) -> IO(Python.Object):
-  do IO<Python.Object>:
-    n : Nat <- Python.len(value)
-    Python.from_nat(n)
-
 def length(request: Python.Call) -> IO(Python.Object):
   do IO<Python.Object>:
     value : Python.Object <- Python.unary(request)
-    length_value(value)
+    n : Nat <- Python.len(value)
+    Python.from_nat(n)
 
 def make_none(request: Python.Call) -> IO(Python.Object):
   match request:
@@ -139,36 +135,24 @@ def truth(request: Python.Call) -> IO(Python.Object):
     result : Bool <- Python.truthy(value)
     Python.from_bool(result)
 
-def load_values(value: Python.Object) -> IO(Python.Object):
-  do IO<Python.Object>:
-    name : String <- Python.to_string(value)
-    Python.import_module(name)
-
 def load(request: Python.Call) -> IO(Python.Object):
   do IO<Python.Object>:
     value : Python.Object <- Python.unary(request)
-    load_values(value)
+    name : String <- Python.to_string(value)
+    Python.import_module(name)
 
 # A modular sum of bytes; LAWS.bend proves it splits over concatenation.
-def checksum_value(value: Python.Object) -> IO(Python.Object):
-  do IO<Python.Object>:
-    data : List<U32> <- Python.to_bytes(value)
-    Python.from_u32(Arithmetic.sum(data, 0))
-
 def checksum(request: Python.Call) -> IO(Python.Object):
   do IO<Python.Object>:
     value : Python.Object <- Python.unary(request)
-    checksum_value(value)
-
-def reversed_bytes_value(value: Python.Object) -> IO(Python.Object):
-  do IO<Python.Object>:
     data : List<U32> <- Python.to_bytes(value)
-    Python.from_bytes(List.reverse(&1, U32, data))
+    Python.from_u32(Arithmetic.sum(data, 0))
 
 def reversed_bytes(request: Python.Call) -> IO(Python.Object):
   do IO<Python.Object>:
     value : Python.Object <- Python.unary(request)
-    reversed_bytes_value(value)
+    data : List<U32> <- Python.to_bytes(value)
+    Python.from_bytes(List.reverse(&1, U32, data))
 
 def words(args: List<Python.Object>) -> IO(List<U32>):
   match args:

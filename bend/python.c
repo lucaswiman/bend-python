@@ -62,10 +62,8 @@ typedef struct {
   Term continuation, argument, function;
   Term fields[5];
   u32 effect;
-  u32* items;
+  u32* buffer;
   size_t length;
-  u32* text;
-  size_t text_length;
   BpValue result_kind;
   u64 result;
   u64 key;
@@ -183,7 +181,7 @@ static void bp_read_list(Env e, Term list, BpCall* call, BpRead mode) {
   size_t length = 0, capacity = 16;
   u32* data = bp_alloc(capacity * sizeof(u32));
   // Store before traversal so a runtime failure still frees the host buffer.
-  if (string) call->text = data; else call->items = data;
+  call->buffer = data;
   u32 cons = string ? CID(SCon) : CID(Con), nil = string ? CID(SNil) : CID(Nil);
   while (term_tag(list) == TAG_CTR && term_aux(list) == cons) {
     Term fields[2];
@@ -193,7 +191,7 @@ static void bp_read_list(Env e, Term list, BpCall* call, BpRead mode) {
       u32* grown = realloc(data, capacity * sizeof(u32));
       if (grown == NULL) bendpy_panic("unable to grow Bend bridge buffer");
       data = grown;
-      if (string) call->text = data; else call->items = data;
+      call->buffer = data;
     }
     if (mode == BP_READ_WORDS && (u64)fields[0] > UINT32_MAX)
       bendpy_panic("unexpected Bend U32 representation");
@@ -203,15 +201,15 @@ static void bp_read_list(Env e, Term list, BpCall* call, BpRead mode) {
   if ((term_tag(list) != TAG_PAK && term_tag(list) != TAG_CTR) || term_aux(list) != nil)
     bendpy_panic("unexpected Bend list representation");
   term_drop(e, list);
-  if (string) call->text_length = length; else call->length = length;
+  call->length = length;
 }
 
 // Handles are sealed: a Bend Object holds its arena index encrypted by a
 // 32-bit Feistel permutation under a fresh per-invocation key. Bend code has
 // no private constructors, so it could otherwise build PyObject{n} or do
 // arithmetic on an id and silently alias another object of the same call.
-// A made-up handle now opens to an in-range index with probability at most
-// count / 2^32, and the first rejected handle aborts the invocation.
+// Accidental fabrication is usually detected, but 32-bit collisions remain
+// possible. This is not authentication; the first rejected handle aborts the call.
 static u64 bp_mix(u64 x) {
   x ^= x >> 30; x *= 0xbf58476d1ce4e5b9ull;
   x ^= x >> 27; x *= 0x94d049bb133111ebull;
@@ -257,8 +255,8 @@ static Term bp_pack(Env e, BpCall* call) {
     case BP_BYTES: {
       bool bytes = call->result_kind == BP_BYTES;
       Term text = term_pak(bytes ? CID(Nil) : CID(SNil), 0);
-      for (size_t i = call->text_length; i > 0; --i)
-        text = io_node(e, bytes ? CID(Con) : CID(SCon), call->text[i - 1], text);
+      for (size_t i = call->length; i > 0; --i)
+        text = io_node(e, bytes ? CID(Con) : CID(SCon), call->buffer[i - 1], text);
       return text;
     }
     default: return (Term)call->result;
@@ -405,7 +403,7 @@ static bool bp_native(BpCall* call, BpOperation operation) {
         if (call->pending) {
           call->argument = bp_pack(e, call);
           call->pending = false;
-          free(call->text); call->text = NULL;
+          free(call->buffer); call->buffer = NULL;
         }
         Term request = bp_apply(e, call->continuation, call->argument);
         call->continuation = 0;
@@ -470,13 +468,13 @@ static bool bp_add(BpCall* call, PyObject* object) {
 
 static PyObject* bp_text(BpCall* call) {
   bp_assert_attached();
-  for (size_t i = 0; i < call->text_length; ++i) {
-    if (call->text[i] > 0x10ffff) {
+  for (size_t i = 0; i < call->length; ++i) {
+    if (call->buffer[i] > 0x10ffff) {
       PyErr_SetString(PyExc_ValueError, "Bend String contains an invalid Unicode codepoint");
       return NULL;
     }
   }
-  return PyUnicode_FromKindAndData(PyUnicode_4BYTE_KIND, call->text, call->text_length);
+  return PyUnicode_FromKindAndData(PyUnicode_4BYTE_KIND, call->buffer, call->length);
 }
 
 static PyObject* bp_call_python(PyObject*, PyObject*, PyObject*);
@@ -612,10 +610,10 @@ static bool bp_effect(BpCall* call) {
       a = bp_get(call, f[0]); if (!a) return false;
       if (!PyUnicode_Check(a)) { PyErr_SetString(PyExc_TypeError, "expected a string"); return false; }
       Py_ssize_t n = PyUnicode_GetLength(a);
-      call->text = malloc((n ? n : 1) * sizeof(u32));
-      if (!call->text) { PyErr_NoMemory(); return false; }
-      for (Py_ssize_t i = 0; i < n; ++i) call->text[i] = PyUnicode_ReadChar(a, i);
-      call->text_length = n; call->result_kind = BP_STRING; return true;
+      call->buffer = malloc((n ? n : 1) * sizeof(u32));
+      if (!call->buffer) { PyErr_NoMemory(); return false; }
+      for (Py_ssize_t i = 0; i < n; ++i) call->buffer[i] = PyUnicode_ReadChar(a, i);
+      call->length = n; call->result_kind = BP_STRING; return true;
     }
 #endif
 #ifdef CID(from_string)
@@ -666,7 +664,7 @@ static bool bp_effect(BpCall* call) {
       result = PyTuple_New(call->length);
       if (!result) return false;
       for (size_t i = 0; i < call->length; ++i) {
-        a = bp_get(call, call->items[i]);
+        a = bp_get(call, call->buffer[i]);
         if (!a) { Py_DECREF(result); return false; }
         PyTuple_SET_ITEM(result, i, Py_NewRef(a));
       }
@@ -687,11 +685,19 @@ static bool bp_effect(BpCall* call) {
       // Any C-contiguous buffer: bytes, bytearray, memoryview, array.array, ...
       Py_buffer view;
       if (PyObject_GetBuffer(a, &view, PyBUF_C_CONTIGUOUS) < 0) return false;
-      call->text = malloc((view.len ? view.len : 1) * sizeof(u32));
-      if (!call->text) { PyBuffer_Release(&view); PyErr_NoMemory(); return false; }
+      call->buffer = malloc((view.len ? view.len : 1) * sizeof(u32));
+      if (!call->buffer) { PyBuffer_Release(&view); PyErr_NoMemory(); return false; }
       const unsigned char* bytes = view.buf;
-      for (Py_ssize_t i = 0; i < view.len; ++i) call->text[i] = bytes[i];
-      call->text_length = view.len; call->result_kind = BP_BYTES;
+#ifdef Py_GIL_DISABLED
+      // Buffer exports pin storage, but do not stop bytearray slice writes.
+      // Other exporters/views require caller synchronization against alias writes.
+      Py_BEGIN_CRITICAL_SECTION(a);
+#endif
+      for (Py_ssize_t i = 0; i < view.len; ++i) call->buffer[i] = bytes[i];
+#ifdef Py_GIL_DISABLED
+      Py_END_CRITICAL_SECTION();
+#endif
+      call->length = view.len; call->result_kind = BP_BYTES;
       PyBuffer_Release(&view);
       return true;
     }
@@ -702,12 +708,12 @@ static bool bp_effect(BpCall* call) {
       if (!result) return false;
       char* out = PyBytes_AS_STRING(result);
       for (size_t i = 0; i < call->length; ++i) {
-        if (call->items[i] > 255) {
+        if (call->buffer[i] > 255) {
           Py_DECREF(result);
-          PyErr_Format(PyExc_ValueError, "byte %zu is %u, outside range(256)", i, call->items[i]);
+          PyErr_Format(PyExc_ValueError, "byte %zu is %u, outside range(256)", i, call->buffer[i]);
           return false;
         }
-        out[i] = (char)call->items[i];
+        out[i] = (char)call->buffer[i];
       }
       return bp_add(call, result);
     }
@@ -742,9 +748,8 @@ static PyObject* bp_run(BpCall* call, BpOperation start) {
     ok = bp_native(call, BP_RESUME);
     if (!ok || call->done) break;
     ok = bp_effect(call);
-    free(call->items); call->items = NULL;
-    // to_string owns the return buffer until BP_RESUME packs it.
-    if (call->result_kind != BP_STRING && call->result_kind != BP_BYTES) { free(call->text); call->text = NULL; }
+    // Conversions returning native data retain the buffer until BP_RESUME packs it.
+    if (call->result_kind != BP_STRING && call->result_kind != BP_BYTES) { free(call->buffer); call->buffer = NULL; }
     call->pending = ok;
   }
   PyObject* result = NULL;
@@ -760,7 +765,7 @@ static PyObject* bp_run(BpCall* call, BpOperation start) {
   // Return the lease before decref: finalizers can invoke this extension too.
   if (call->runtime) bp_runtime_release(call->runtime);
   call->runtime = NULL;
-  free(call->text); free(call->items);
+  free(call->buffer);
   for (size_t i = 0; i < call->count; ++i) Py_DECREF(call->objects[i]);
   PyMem_Free(call->objects);
   return result;

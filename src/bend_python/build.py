@@ -1,6 +1,6 @@
 """Setuptools integration for the pinned Bend native compiler."""
 
-from contextlib import contextmanager
+from copy import copy
 import hashlib
 import json
 import os
@@ -128,6 +128,9 @@ def _compiler():
     )
 
 
+_library_lock = threading.Lock()
+
+
 def _bridge_libraries(source):
     """Directories of the bend-python libraries a program reaches by relative imports.
 
@@ -136,22 +139,26 @@ def _bridge_libraries(source):
     A library imported but absent is vendored first, so projects need not
     commit or ship a copy.
     """
-    pending, seen, found = [Path(source).resolve()], set(), []
-    while pending:
-        path = pending.pop()
-        if path in seen:
-            continue
-        seen.add(path)
-        if path.name == "python.bend" and not path.exists():
-            print(f"bend-python: vendoring the Bend library into {path.parent}", file=sys.stderr)
-            vendor(path.parent)
-        if not path.is_file():
-            continue
-        if path.name == "python.bend" and path.with_name("python.c").is_file():
-            found.append(path.parent)
-        for match in re.finditer(r"^\s*import\s+(\.\.?/\S+\.bend)\b", path.read_text(), re.M):
-            pending.append((path.parent / match[1]).resolve())
-    return found
+    # A second extension must not observe an incomplete automatic vendor copy.
+    with _library_lock:
+        pending, seen, found = [Path(source).resolve()], set(), []
+        while pending:
+            path = pending.pop()
+            if path in seen:
+                continue
+            seen.add(path)
+            if path.name == "python.bend" and not path.exists():
+                print(
+                    f"bend-python: vendoring the Bend library into {path.parent}", file=sys.stderr
+                )
+                vendor(path.parent)
+            if not path.is_file():
+                continue
+            if path.name == "python.bend" and path.with_name("python.c").is_file():
+                found.append(path.parent)
+            for match in re.finditer(r"^\s*import\s+(\.\.?/\S+\.bend)\b", path.read_text(), re.M):
+                pending.append((path.parent / match[1]).resolve())
+        return found
 
 
 def _bend(bend, *args, failure, quiet=False):
@@ -265,45 +272,32 @@ static u32            pool_size;"""
 class BendBuildExt(build_ext):
     """Proof-check, emit C, and compile BendExtension instances with Clang."""
 
-    # build_ext --parallel shares one compiler object between threads; an
-    # unserialized swap could restore another Bend extension's driver mid-build.
-    _compiler_swap = threading.Lock()
-
-    @contextmanager
-    def _clang(self):
-        """Compile with Clang without changing the environment or other extensions."""
-        with self._compiler_swap:
-            compiler = self.compiler
-            commands = {
-                name: getattr(compiler, name, None) for name in ("compiler_so", "linker_so")
-            }
-            if not commands["compiler_so"] or not commands["linker_so"]:
-                raise PlatformError("Bend extensions require a Unix Clang compiler")
-            replacements = {}
-            if "CC" not in os.environ:
-                # Replace only the driver; keep sysconfig's flags such as -pthread and -shared.
-                clang = shutil.which("clang")
-                if not clang:
-                    raise PlatformError(
-                        "Bend generated C requires Clang; install it or set CC=clang"
-                    )
-                replacements = {name: [clang, *command[1:]] for name, command in commands.items()}
-            driver = replacements.get("compiler_so", commands["compiler_so"])
-            try:
-                version = subprocess.run(
-                    [*driver, "--version"], text=True, capture_output=True
-                ).stdout
-            except OSError:
-                version = ""
-            if "clang" not in version.lower():
-                raise PlatformError(
-                    f"Bend generated C requires Clang, not {driver[0]!r}; set CC=clang"
-                )
-            compiler.set_executables(**replacements)
-            try:
-                yield
-            finally:
-                compiler.set_executables(**commands)
+    def _clang_compiler(self):
+        """Give this extension its own compiler, preserving the configured flags."""
+        compiler = copy(self.compiler)
+        commands = {name: getattr(compiler, name, None) for name in ("compiler_so", "linker_so")}
+        if not all(commands.values()):
+            raise PlatformError("Bend extensions require a Unix Clang compiler")
+        if "CC" not in os.environ:
+            clang = shutil.which("clang")
+            if not clang:
+                raise PlatformError("Bend generated C requires Clang; install it or set CC=clang")
+            compiler.set_executables(
+                **{name: [clang, *command[1:]] for name, command in commands.items()}
+            )
+        try:
+            version = subprocess.run(
+                [*compiler.compiler_so, "--version"], text=True, capture_output=True
+            ).stdout
+        except OSError as error:
+            raise PlatformError(
+                f"Cannot run C compiler {compiler.compiler_so[0]!r}: {error}"
+            ) from error
+        if "clang" not in version.lower():
+            raise PlatformError(
+                f"Bend generated C requires Clang, not {compiler.compiler_so[0]!r}; set CC=clang"
+            )
+        return compiler
 
     def build_extension(self, extension):
         if not isinstance(extension, BendExtension):
@@ -343,8 +337,11 @@ class BendBuildExt(build_ext):
         sources = extension.sources
         extension.sources = [str(generated)]
         try:
-            with self._clang():
-                super().build_extension(extension)
+            # build_ext --parallel shares this command. Isolate both the command
+            # and compiler so ordinary C extensions retain their own toolchain.
+            command = copy(self)
+            command.compiler = self._clang_compiler()
+            build_ext.build_extension(command, extension)
         finally:
             extension.sources = sources
 

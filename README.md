@@ -128,13 +128,17 @@ Conversions are strict. `to_u32` accepts only `int` in `[0, 2**32)`, not `bool`;
 `float` and rounds to single precision (overflowing to infinity). Strings convert
 codepoint by codepoint, lone surrogates included; they are linked lists in Bend,
 so prefer `to_bytes` for binary data.
+`to_bytes` snapshots a direct `bytearray` while holding its lock on free-threaded
+Python. For other mutable buffer exporters, including memoryviews of mutable
+storage, callers must prevent concurrent writes while conversion runs.
 Wrong types raise `TypeError`, out-of-range values `OverflowError`, and wrong
 arity or unexpected keywords in typed exports `TypeError`. Python exceptions
 raised inside a call propagate unchanged.
 
 Handles are valid only during the call that created them. The bridge seals each
-handle with a per-call key, so one built by hand in Bend (`PyObject{0}`) or kept
-from another call raises `ValueError` rather than reaching some other object.
+handle with a per-call key and rejects invalid decoded handles with `ValueError`.
+This detects accidental fabrication or reuse from another call probabilistically;
+it is not an absolute guarantee or a security boundary.
 
 ## Threads and the GIL
 
@@ -158,8 +162,8 @@ The build refuses to compile unless every law checks:
   call returns attached (failures included), and that free-threaded builds
   detach ([`bend/THREAD_LAWS.bend`](https://github.com/lucaswiman/bend-python/blob/main/bend/THREAD_LAWS.bend)).
 - **Runtime leases.** In the same model, one call owns an instance at a time,
-  a returned or failed instance cannot be reused, and only healthy, small
-  instances are cached.
+  a lease cannot be returned twice, and only healthy, small instances are cached
+  for reuse.
 
 Each model was mutation-tested: breaking any of these rules fails a law. The
 laws are about models and pure Bend code. **Nothing proves that the C bridge
@@ -175,7 +179,7 @@ its evidence:
 | A native failure affects only its instance | Model proved (`failure_isolated`); C unmaps poisoned instances; test |
 | Failed or large instances are never reused | Model proved (`reusable_requires_*`); test for memory release |
 | Wrong arity is a `TypeError` | Proved for the parsers and wrappers (`*_exact_arity`, `*_complete`, `*_rejected`); keyword rejection tested |
-| Forged or stale handles are rejected | Sealing in C, accepted by chance with probability ≤ objects/2³²; test. Guards against mistakes, not hostile Bend code, which can import its own C |
+| Accidental forged or stale handles are detected | Sealing in C; tests. Rejection is probabilistic: 32-bit collisions remain possible. Hostile Bend code can import its own C |
 | Exports cannot capture variables | Checked by C at import; test |
 | Objects cross unchanged; conversions are strict | C; tests |
 

@@ -44,8 +44,7 @@ def is_leave(operation: Operation) -> Bool:
     case _:
       False{}
 
-# Thread-state transitions. Lease operations are accepted here only as a
-# thread-state check; step_session applies them to the pool.
+# Attachment and native transitions. Only step_session handles lease operations.
 def step(state: State, operation: Operation) -> Maybe<State>:
   match state operation:
     case Attached{} Save{}:

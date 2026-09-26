@@ -61,17 +61,6 @@ def Laws.pair_exact_arity(xs, left, right, success):
     case _ <> _ <> _ <> tail:
       Empty.absurd({1n+1n+1n+Python.arity(tail) == 2n : Nat}, none_not_some(Pair(Python.Object, Python.Object), (left, right), success))
 
-def zero_discriminator(value: Nat) -> Type:
-  match value:
-    case 0n:
-      Unit
-    case 1n+_:
-      Empty
-
-def zero_not_succ(-n: Nat, equal: {0n == 1n+n : Nat}) -> Empty:
-  %equal : zero_discriminator(_)
-  Unit{}
-
 def succ_discriminator(value: Nat) -> Type:
   match value:
     case 0n:
@@ -97,7 +86,7 @@ def succ_injective(-a: Nat, -b: Nat, equal: {1n+a == 1n+b : Nat}) -> {a == b : N
 def Laws.singleton_complete(xs, exact):
   match xs:
     case []:
-      Empty.absurd({Python.singleton([]) == Python.argument([], 0n) : Maybe<Python.Object>}, zero_not_succ(0n, exact))
+      {==}
     case [_]:
       {==}
     case head <> _ <> tail:
@@ -106,9 +95,9 @@ def Laws.singleton_complete(xs, exact):
 def Laws.pair_complete(xs, exact):
   match xs:
     case []:
-      Empty.absurd({None{} == None{} : Maybe<Pair(Python.Object, Python.Object)>}, zero_not_succ(1n, exact))
+      {==}
     case [_]:
-      Empty.absurd({None{} == None{} : Maybe<Pair(Python.Object, Python.Object)>}, zero_not_succ(0n, succ_injective(0n, 1n, exact)))
+      {==}
     case [_, _]:
       {==}
     case left <> right <> _ <> tail:

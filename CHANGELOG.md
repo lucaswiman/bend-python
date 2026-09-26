@@ -25,8 +25,8 @@ when its version has a section below.
   `builtins`, `construct`, `import_module`).
 - Concurrent calls in isolated runtime instances, with a per-export GIL policy;
   free-threaded CPython 3.14t never enables the GIL.
-- Sealed object handles: a handle built by hand or kept from another call
-  raises `ValueError`.
+- Sealed object handles detect accidental fabrication or reuse from another
+  call probabilistically, raising `ValueError` on an invalid decoded handle.
 - Proved models of the thread-attachment and runtime-lease protocol, and laws
   for the typed adapters' argument checks.
 - Linux x86_64 support for CPython 3.10–3.14 and 3.14t.
