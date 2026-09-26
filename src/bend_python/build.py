@@ -60,8 +60,45 @@ def _patch_runtime(source, name):
   fprintf(stderr, "bend: %s\\n", msg);
   _exit(1);
 }'''
+    cpu_globals = '''static Corpus CORPUS;
+static u64    ALC[CUBE_T + 1][3 * ALC_WORDS] __attribute__((aligned(128)));
+static u32    KEEP_WORDS;
+// the bag: 2^CUBE_LOG groups of CUBE_T lanes (a -D constant on the device)
+static u32    CUBE_LOG = 7;
+static u32    bank_lock;
+
+static u32            pool_size;'''
+    context_blocks = list(re.finditer(
+        r"// BENDPY_RUNTIME_CONTEXT_BEGIN\n(.*?)// BENDPY_RUNTIME_CONTEXT_END\n",
+        source, re.DOTALL,
+    ))
+    if len(context_blocks) != 1:
+        raise RuntimeError("Bend bridge runtime context declaration is missing or duplicated")
+    context_block = context_blocks[0]
+    contexts = context_block[1]
+    source = source[:context_block.start()] + source[context_block.end():]
+    pool_open = '''OUTLINE void pool_open(void) {
+  static bool up;
+  if (up) {
+    return;
+  }
+  up = true;
+  for (u32 w = 0; w < pool_size; w += 1) {
+    pthread_t tid;
+    if (pthread_create(&tid, NULL, pool_work, (void*)(uintptr_t)w)) {
+      err_fail("pthread_create");
+    }
+  }
+}'''
     for old, new in [
         (fatal, "static void err_fail(const char* msg) { bendpy_panic(msg); }"),
+        (cpu_globals, contexts),
+        ("static bool io_gpu;\nstatic Stk  io_stk;", ""),
+        ("static u64 corpus_size;", ""),
+        ("  Corpus H   = CORPUS;", "  Corpus H   = CORPUS;\n  corpus_size = size;"),
+        (pool_open, '''OUTLINE void pool_open(void) {
+  err_fail("Bend worker threads are unsupported by the Python embedding");
+}'''),
         ("int main(int argc, char** argv) {", "static int bendpy_unused_main(int argc, char** argv) {"),
         ("#define WL_OPEN    { WL_BANK u32 rn;", "#define WL_OPEN    { WL_BANK u32 rn = 0;"),
     ]:

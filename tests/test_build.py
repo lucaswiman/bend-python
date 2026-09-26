@@ -12,9 +12,76 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 BEND = os.environ.get("BEND", str(ROOT / ".tools/bend/bin/bend"))
 
+# Only temporary test extensions contain this rendezvous. It stops the first
+# evaluator entry until a second independent call enters, even on one CPU.
+# A serializing runtime times out instead of making this a timing/speedup test.
+NATIVE_RENDEZVOUS = r'''
+#include <errno.h>
+#include <time.h>
+
+static pthread_mutex_t bp_test_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t bp_test_condition = PTHREAD_COND_INITIALIZER;
+static unsigned bp_test_entered, bp_test_timeout;
+static bool bp_test_armed;
+static void* bp_test_contexts[2];
+static pthread_t bp_test_threads[2];
+
+__attribute__((visibility("default"))) void bp_test_arm(void) {
+  pthread_mutex_lock(&bp_test_mutex);
+  bp_test_entered = bp_test_timeout = 0;
+  bp_test_armed = true;
+  pthread_mutex_unlock(&bp_test_mutex);
+}
+
+static void bp_test_enter(void* context) {
+  pthread_mutex_lock(&bp_test_mutex);
+  if (bp_test_armed && bp_test_entered < 2) {
+    unsigned slot = bp_test_entered++;
+    bp_test_contexts[slot] = context;
+    bp_test_threads[slot] = pthread_self();
+    pthread_cond_broadcast(&bp_test_condition);
+    struct timespec deadline;
+    clock_gettime(CLOCK_REALTIME, &deadline);
+    deadline.tv_sec += 5;
+    while (bp_test_entered < 2 && !bp_test_timeout) {
+      if (pthread_cond_timedwait(&bp_test_condition, &bp_test_mutex,
+                                 &deadline) == ETIMEDOUT) {
+        bp_test_timeout = 1;
+        pthread_cond_broadcast(&bp_test_condition);
+      }
+    }
+  }
+  pthread_mutex_unlock(&bp_test_mutex);
+}
+
+__attribute__((visibility("default"))) unsigned bp_test_status(void) {
+  pthread_mutex_lock(&bp_test_mutex);
+  unsigned result = bp_test_entered == 2;
+  if (result && bp_test_contexts[0] == bp_test_contexts[1]) result |= 2;
+  if (result && pthread_equal(bp_test_threads[0], bp_test_threads[1])) result |= 4;
+  if (bp_test_timeout) result |= 8;
+  bp_test_armed = false;
+  pthread_mutex_unlock(&bp_test_mutex);
+  return result;
+}
+'''
+
+RENDEZVOUS_SETUP = '''
+import ctypes
+from concurrent.futures import ThreadPoolExecutor
+import bend_example as module
+probe = ctypes.CDLL(module.__file__)
+probe.bp_test_arm.argtypes = []
+probe.bp_test_arm.restype = None
+probe.bp_test_status.argtypes = []
+probe.bp_test_status.restype = ctypes.c_uint
+probe.bp_test_arm()
+'''
+
 
 class BuildTests(unittest.TestCase):
-    def build(self, module=None, break_proof=False, omit_thread_proof=False):
+    def build(self, module=None, break_proof=False, omit_thread_proof=False,
+              native_rendezvous=False):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         directory = Path(temporary.name)
@@ -32,6 +99,17 @@ class BuildTests(unittest.TestCase):
             arithmetic.write_text(arithmetic.read_text().replace("x * x", "x + 1"))
         if omit_thread_proof:
             (directory / "bend/THREAD_PROOF.bend").unlink()
+        if native_rendezvous:
+            shim = directory / "bend/python.c"
+            source = shim.read_text()
+            marker = "static Term bp_apply(Env e, Term function, Term argument) {"
+            self.assertEqual(source.count(marker), 1)
+            source = source.replace(marker, NATIVE_RENDEZVOUS + "\n" + marker)
+            evaluator = "  return corpus_eval(e.mem, term_tsk(FID_CLO_APPLY, at));"
+            self.assertEqual(source.count(evaluator), 1)
+            shim.write_text(source.replace(
+                evaluator, "  bp_test_enter(e.mem);\n" + evaluator,
+            ))
         result = subprocess.run(
             [sys.executable, "setup.py", "build_ext", "--inplace"],
             cwd=directory, env={**os.environ, "CC": "clang", "BEND": BEND},
@@ -59,30 +137,57 @@ class BuildTests(unittest.TestCase):
         self.assertIn("THREAD_PROOF.bend", result.stdout + result.stderr)
         self.assertFalse(list(directory.rglob("*.so")))
 
-    def test_native_failure_becomes_exception_and_poison(self):
+    def test_native_evaluator_calls_overlap_with_distinct_contexts(self):
+        directory, result = self.build('''
+def tree(+depth: Nat, +seed: U32) -> U32:
+  match depth:
+    case 0n:
+      seed
+    case 1n+pred:
+      left right = tree(pred, (seed * 2 : U32)) tree(pred, ((seed * 2 : U32) + 1 : U32))
+      (left + right : U32)
+
+def main() -> IO(Unit):
+  Python.export_u32(~(seed => tree(6n, seed)), "work", True{})
+''', native_rendezvous=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.run_python(directory, RENDEZVOUS_SETUP + '''
+seeds = (41, 0xfffffff9)
+with ThreadPoolExecutor(max_workers=2) as executor:
+    futures = [executor.submit(module.work, seed) for seed in seeds]
+    # Depth six has 64 leaves: seed*64, seed*64+1, ..., seed*64+63.
+    expected = [(seed * 4096 + 2016) & 0xffffffff for seed in seeds]
+    assert [future.result() for future in futures] == expected
+status = probe.bp_test_status()
+assert status == 1, f"native overlap/context rendezvous failed: {status}"
+''')
+
+    def test_native_failure_discards_only_the_failed_context(self):
         directory, result = self.build('''
 def checked_square(+x: U32) -> U32:
   U32.from_nat(Nat.mul(U32.to_nat(x), U32.to_nat(x)))
 
 def main() -> IO(Unit):
   Python.export_u32(~(x => checked_square(x)), "checked_square", True{})
-''')
+''', native_rendezvous=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.run_python(directory, '''
-import bend_example as module
-assert module.checked_square(12) == 144
-try:
-    module.checked_square(2**32 - 1)
-except RuntimeError as error:
-    assert "Nat" in str(error), error
-else:
-    raise AssertionError("native failure did not reach Python")
-try:
-    module.checked_square(12)
-except RuntimeError as error:
-    assert "previous failure" in str(error), error
-else:
-    raise AssertionError("corrupt runtime was reused")
+        self.run_python(directory, RENDEZVOUS_SETUP + '''
+def fail():
+    try:
+        module.checked_square(2**32 - 1)
+    except RuntimeError as error:
+        assert "Nat" in str(error), error
+    else:
+        raise AssertionError("native failure did not reach Python")
+
+with ThreadPoolExecutor(max_workers=2) as executor:
+    failed = executor.submit(fail)
+    healthy = executor.submit(module.checked_square, 12)
+    failed.result()
+    assert healthy.result() == 144
+assert probe.bp_test_status() == 1
+for value in (0, 1, 12, 65535):
+    assert module.checked_square(value) == value * value
 ''')
 
     def test_duplicate_exports_fail_import(self):

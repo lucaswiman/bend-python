@@ -1,6 +1,32 @@
-// CPython and private Bend 2.0.28 runtime boundary. All runtime access is locked.
-#include <Python.h>
+// CPython and private Bend 2.0.28 runtime boundary. Every invocation exclusively
+// owns a runtime instance; the generated runtime selects it through bp_current.
+// The build relocates this block before the pinned runtime's first state use.
+// BENDPY_RUNTIME_CONTEXT_BEGIN
 #include <setjmp.h>
+typedef struct BpRuntime {
+  Corpus heap;
+  u64 allocator[CUBE_T + 1][3 * ALC_WORDS] __attribute__((aligned(128)));
+  u32 keep_words, cube_log, bank, workers;
+  bool gpu;
+  Stk stack;
+  u64 heap_size;
+  jmp_buf escape;
+  bool poisoned;
+  char error[256];
+  struct BpRuntime* next;
+} BpRuntime;
+static _Thread_local BpRuntime* bp_current;
+#define CORPUS (bp_current->heap)
+#define ALC (bp_current->allocator)
+#define KEEP_WORDS (bp_current->keep_words)
+#define CUBE_LOG (bp_current->cube_log)
+#define bank_lock (bp_current->bank)
+#define pool_size (bp_current->workers)
+#define io_gpu (bp_current->gpu)
+#define io_stk (bp_current->stack)
+#define corpus_size (bp_current->heap_size)
+// BENDPY_RUNTIME_CONTEXT_END
+#include <Python.h>
 
 #if BANGS
 #error "GPU entry points are not supported by this embedding."
@@ -17,6 +43,7 @@ typedef enum { BP_UNIT, BP_OBJECT, BP_U32, BP_F32, BP_BOOL, BP_STRING, BP_NAT } 
 typedef enum { BP_INIT, BP_START, BP_RESUME, BP_DROP } BpOperation;
 
 typedef struct {
+  BpRuntime* runtime;
   PyObject** objects;
   size_t count, capacity, nargs;
   PyObject* module;
@@ -33,24 +60,72 @@ typedef struct {
   char error[256];
 } BpCall;
 
-static pthread_mutex_t bp_mutex = PTHREAD_MUTEX_INITIALIZER;
-static jmp_buf bp_escape;
-static bool bp_poisoned;
-static char bp_error[256];
+static pthread_mutex_t bp_pool_mutex = PTHREAD_MUTEX_INITIALIZER;
+static BpRuntime* bp_idle;
+static size_t bp_idle_count;
+#define BP_IDLE_LIMIT 8
+#define BP_STACK_BYTES (1ull << 31)
+#define BP_STACK_GUARD 16384
 
 static void bp_assert_attached(void) {
   // PyThreadState_Get fails fatally if this thread is detached, including on
   // free-threaded CPython. Traditional builds must also own the GIL.
   (void)PyThreadState_Get();
+  if (bp_current != NULL) Py_FatalError("Python API reached inside Bend evaluation");
 #ifndef Py_GIL_DISABLED
   if (!PyGILState_Check()) Py_FatalError("Bend bridge entered Python without the GIL");
 #endif
 }
 
 static void bendpy_panic(const char* message) {
-  bp_poisoned = true;
-  snprintf(bp_error, sizeof(bp_error), "%s", message);
-  longjmp(bp_escape, 1);
+  bp_current->poisoned = true;
+  snprintf(bp_current->error, sizeof(bp_current->error), "%s", message);
+  longjmp(bp_current->escape, 1);
+}
+
+static BpRuntime* bp_runtime_acquire(void) {
+  bp_assert_attached();
+  PyThreadState* thread = PyEval_SaveThread();
+  pthread_mutex_lock(&bp_pool_mutex);
+  BpRuntime* runtime = bp_idle;
+  if (runtime) {
+    bp_idle = runtime->next;
+    --bp_idle_count;
+    runtime->next = NULL;
+  }
+  pthread_mutex_unlock(&bp_pool_mutex);
+  if (!runtime) {
+    // The allocator cache has 128-byte alignment in the pinned runtime.
+    void* memory = NULL;
+    if (posix_memalign(&memory, _Alignof(BpRuntime), sizeof(BpRuntime)) == 0) {
+      runtime = memory;
+      memset(runtime, 0, sizeof(*runtime));
+      runtime->cube_log = 7;
+    }
+  }
+  PyEval_RestoreThread(thread);
+  if (!runtime) PyErr_NoMemory();
+  return runtime;
+}
+
+static void bp_runtime_release(BpRuntime* runtime) {
+  bp_assert_attached();
+  PyThreadState* thread = PyEval_SaveThread();
+  bool retained = false;
+  pthread_mutex_lock(&bp_pool_mutex);
+  if (!runtime->poisoned && bp_idle_count < BP_IDLE_LIMIT) {
+    runtime->next = bp_idle;
+    bp_idle = runtime;
+    ++bp_idle_count;
+    retained = true;
+  }
+  pthread_mutex_unlock(&bp_pool_mutex);
+  if (!retained) {
+    if (runtime->heap) munmap(runtime->heap, runtime->heap_size);
+    if (runtime->stack) munmap(runtime->stack, BP_STACK_BYTES + BP_STACK_GUARD);
+    free(runtime);
+  }
+  PyEval_RestoreThread(thread);
 }
 
 static void* bp_alloc(size_t size) {
@@ -110,8 +185,8 @@ static Term bp_pack(Env e, BpCall* call) {
   }
 }
 
-// Decode Bend-owned arguments while holding the runtime lock. The resulting
-// handles and codepoints are plain C data; Python callbacks run after unlock.
+// Decode arguments in the exclusively leased runtime. The resulting handles
+// and codepoints are plain C data; Python callbacks run outside evaluation.
 static void bp_decode(Env e, BpCall* call) {
   Term* f = call->fields;
   switch (call->effect) {
@@ -195,21 +270,17 @@ static void bp_decode(Env e, BpCall* call) {
 
 static bool bp_native(BpCall* call, BpOperation operation) {
   bp_assert_attached();
-  // Detach while waiting even when the export retains the GIL for computation.
-  PyThreadState* thread = PyEval_SaveThread();
-  pthread_mutex_lock(&bp_mutex);
-  if (!call->release_gil) { PyEval_RestoreThread(thread); thread = NULL; }
-  if (bp_poisoned) {
+  PyThreadState* thread = call->release_gil ? PyEval_SaveThread() : NULL;
+  bp_current = call->runtime;
+  if (bp_current->poisoned) {
     snprintf(call->error, sizeof(call->error), "Bend runtime is unusable after a previous failure");
-  } else if (setjmp(bp_escape)) {
-    snprintf(call->error, sizeof(call->error), "%s", bp_error);
+  } else if (setjmp(bp_current->escape)) {
+    snprintf(call->error, sizeof(call->error), "%s", bp_current->error);
   } else {
-    if (operation == BP_INIT) {
-      if (CORPUS != NULL) bendpy_panic("Bend runtime has already been initialized");
+    if (CORPUS == NULL) {
       corpus_setup(false, 1, 0);
-      u64 bytes = 1ull << 31;
-      io_stk = pool_mmap(bytes + 16384);
-      if (mprotect((char*)io_stk + bytes, 16384, PROT_NONE))
+      io_stk = pool_mmap(BP_STACK_BYTES + BP_STACK_GUARD);
+      if (mprotect((char*)io_stk + BP_STACK_BYTES, BP_STACK_GUARD, PROT_NONE))
         bendpy_panic("unable to guard Bend stack");
     }
     Env e = { CORPUS, ALC[0] };
@@ -257,14 +328,14 @@ static bool bp_native(BpCall* call, BpOperation operation) {
         break;
     }
   }
-  pthread_mutex_unlock(&bp_mutex);
+  bp_current = NULL;
   if (thread) PyEval_RestoreThread(thread);
   bp_assert_attached();
   return call->error[0] == 0;
 }
 
 // Each invocation owns a reference arena. Handles never contain PyObject*
-// addresses. Check them before access, and release the arena after native locks.
+// addresses. Check them before access, and release the arena outside evaluation.
 static PyObject* bp_get(BpCall* call, u64 index) {
   bp_assert_attached();
   if (index >= call->count) {
@@ -476,7 +547,8 @@ static bool bp_effect(BpCall* call) {
 }
 
 static PyObject* bp_run(BpCall* call, BpOperation start) {
-  bool ok = bp_native(call, start);
+  call->runtime = bp_runtime_acquire();
+  bool ok = call->runtime != NULL && bp_native(call, start);
   while (ok && !call->done) {
     ok = bp_native(call, BP_RESUME);
     if (!ok || call->done) break;
@@ -492,9 +564,13 @@ static PyObject* bp_run(BpCall* call, BpOperation start) {
     if (object) result = Py_NewRef(object);
   } else {
     if (!PyErr_Occurred()) PyErr_SetString(PyExc_RuntimeError, call->error);
-    // A Python exception aborts this invocation, not the shared runtime.
-    if (!call->error[0]) bp_native(call, BP_DROP);
+    // A Python exception only aborts its invocation. Native failures discard
+    // the damaged instance rather than affecting other callers.
+    if (call->runtime && !call->error[0]) bp_native(call, BP_DROP);
   }
+  // Return the lease before decref: finalizers can invoke this extension too.
+  if (call->runtime) bp_runtime_release(call->runtime);
+  call->runtime = NULL;
   free(call->text); free(call->items);
   for (size_t i = 0; i < call->count; ++i) Py_DECREF(call->objects[i]);
   PyMem_Free(call->objects);

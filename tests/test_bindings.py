@@ -237,6 +237,40 @@ class NativeBindingsTests(unittest.TestCase):
         with ThreadPoolExecutor(max_workers=8) as executor:
             list(executor.map(worker, range(8)))
 
+    def test_concurrent_callbacks_reenter_with_independent_arenas_and_errors(self):
+        self.run_fresh_python("""
+            import threading
+            from concurrent.futures import ThreadPoolExecutor
+            import bend_example
+
+            rendezvous = threading.Barrier(2, timeout=5)
+            payloads = [object(), object()]
+            errors = [ValueError("first callback"), ValueError("second callback")]
+
+            def worker(index):
+                payload = payloads[index]
+                def callback(value, *, keyword):
+                    assert value is payload and keyword is payload
+                    rendezvous.wait()
+                    assert bend_example.echo(value) is payload
+                    assert bend_example.call(bend_example.square, 12) == 144
+                    if index == 0:
+                        raise errors[index]
+                    return bend_example.call(lambda item: item, value)
+
+                try:
+                    result = bend_example.call(callback, payload, keyword=payload)
+                except ValueError as error:
+                    assert index == 0 and error is errors[index]
+                else:
+                    assert index == 1 and result is payload
+                assert bend_example.echo(payload) is payload
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                list(executor.map(worker, range(2)))
+            assert bend_example.square(12) == 144
+        """)
+
     def run_fresh_python(self, source):
         env = dict(os.environ, PYTHONPATH=str(MODULE_DIRECTORY), PATH="", BEND="/missing/bend")
         with tempfile.TemporaryDirectory() as cwd:

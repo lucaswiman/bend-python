@@ -7,16 +7,16 @@ type State is Data:
   Attached{}
   Detached{}
 
+# Native runtime health: ordinary Python exceptions do not mark a context failed.
 type Outcome is Data:
   Succeeded{}
   Failed{}
-  Poisoned{}
 
 type Operation is Data:
   Save{}
-  WaitRuntime{}
+  AcquireLease{}
+  ReturnLease{outcome: Outcome, cache_space: Bool}
   NativeWork{outcome: Outcome}
-  UnlockRuntime{}
   Restore{}
   PythonEffect{}
 
@@ -30,11 +30,11 @@ def step(state: State, operation: Operation) -> Maybe<State>:
       Some{Attached{}}
     case Attached{} PythonEffect{}:
       Some{Attached{}}
-    case Detached{} WaitRuntime{}:
+    case Detached{} AcquireLease{}:
+      Some{Detached{}}
+    case Detached{} ReturnLease{_, _}:
       Some{Detached{}}
     case current NativeWork{_}:
-      Some{current}
-    case current UnlockRuntime{}:
       Some{current}
     case _ _:
       None{}
@@ -46,11 +46,57 @@ def run(operations: List<Operation>, state: State) -> Maybe<State>:
     case operation <> tail:
       Maybe.bind(&1, State, State, step(state, operation), next => run(tail, next))
 
-# bp_native detaches before waiting for its mutex. Both normal and error exits
-# pass through unlock and restore; retain-GIL exports restore before native work.
+# One invocation owns its context throughout native work and attached effects.
+# Only cache acquire/return takes a shared lock; evaluation has no shared mutex.
+def acquire_call() -> List<Operation>:
+  [Save{}, AcquireLease{}, Restore{}]
+
+def return_call(outcome: Outcome, cache_space: Bool) -> List<Operation>:
+  [Save{}, ReturnLease{outcome, cache_space}, Restore{}]
+
 def native_call(release_gil: Bool, outcome: Outcome) -> List<Operation>:
   match release_gil:
     case True{}:
-      [Save{}, WaitRuntime{}, NativeWork{outcome}, UnlockRuntime{}, Restore{}]
+      [Save{}, NativeWork{outcome}, Restore{}]
     case False{}:
-      [Save{}, WaitRuntime{}, Restore{}, NativeWork{outcome}, UnlockRuntime{}]
+      [NativeWork{outcome}]
+
+# Each slot denotes one distinct runtime allocation. The C cache must preserve
+# that identity and perform acquisition/return atomically; these are trust inputs.
+type Context is Data:
+  Idle{}
+  Leased{}
+  Discarded{}
+
+def eligible(context: Maybe<&2, Context>) -> Bool:
+  match context:
+    case Some{Idle{}}:
+      True{}
+    case _:
+      False{}
+
+def available(pool: List<&2, Context>, slot: Nat) -> Bool:
+  eligible(List.get(&2, Context, pool, slot))
+
+def reserve(pool: List<&2, Context>, slot: Nat) -> List<&2, Context>:
+  List.set(&2, Context, pool, slot, Leased{})
+
+def acquire_if(allowed: Bool, pool: List<&2, Context>, slot: Nat) -> Maybe<List<&2, Context>>:
+  match allowed:
+    case True{}:
+      Some{reserve(pool, slot)}
+    case False{}:
+      None{}
+
+def acquire(+pool: List<&2, Context>, +slot: Nat) -> Maybe<List<&2, Context>>:
+  acquire_if(available(pool, slot), pool, slot)
+
+def completion(outcome: Outcome, cache_space: Bool) -> Context:
+  match outcome cache_space:
+    case Succeeded{} True{}:
+      Idle{}
+    case _ _:
+      Discarded{}
+
+def finish(pool: List<&2, Context>, slot: Nat, outcome: Outcome, cache_space: Bool) -> List<&2, Context>:
+  List.set(&2, Context, pool, slot, completion(outcome, cache_space))

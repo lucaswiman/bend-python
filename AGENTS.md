@@ -17,11 +17,11 @@
 
 ## Runtime boundary
 
-- [Pinned compiler](https://github.com/bendlang/bend/blob/v2.0.28/bend2/comp.ts): global heap/evaluator; serialize every runtime operation. Captureless closures can be replayed; captured environments are consumed.
+- [Pinned compiler](https://github.com/bendlang/bend/blob/v2.0.28/bend2/comp.ts): patched CPU globals live in exclusive per-invocation runtime contexts, selected through TLS. Captureless closures can cross contexts; captured environments are consumed.
 - Generic `Call -> IO(Object)` callbacks preserve every Python object's identity/precision through per-invocation strong-reference arenas. Never retain/forge handles across calls.
 - **Object wrappers may be packed TAG_PAK or heap TAG_CTR**; both must unbox correctly. This matters after Bend copies/reboxes handles.
-- Detach before waiting for the runtime mutex; optionally stay detached during pure work. Unlock and reattach before Python effects/refcounts; callbacks may reenter. No Python API inside native evaluation.
+- Detach for the short idle-cache lock and optionally during pure work; reattach before Python effects/refcounts. Concurrent and reentrant calls own separate contexts. No Python API inside native evaluation. Each call uses one worker; upstream pool entry is rejected.
 - Free-threaded Python needs attachment plus thread-safe APIs, not a GIL. C boundaries check attachment; traditional builds check GIL ownership too. Main interpreter only, including checks on every call.
-- THREAD_PROOF proves the protocol model, **not C correspondence or CPython**. Do not claim end-to-end GIL/refcount verification.
-- Avoid Bend's signal-installing pool_stack/io_loop. Patched err_fail raises a Python exception and poisons the runtime; ordinary Python exceptions only abort their invocation.
-- Native faults still follow host signal handling. About 8 GiB heap + 2 GiB stack are virtual reservations, retained per extension until process exit; not resident RAM.
+- THREAD_PROOF proves attachment and context-lease models, **not C correspondence or CPython**. Lease laws assume distinct allocations and atomic cache operations; do not claim end-to-end GIL/refcount verification.
+- Avoid Bend's signal-installing pool_stack/io_loop. Patched err_fail raises a Python exception and discards that runtime instance; unrelated calls remain usable. Ordinary Python exceptions only abort their invocation.
+- Native faults still follow host signal handling. Each context reserves about 8 GiB heap + 2 GiB stack virtually, not resident RAM. Cache at most eight idle contexts; unmap failed/excess contexts. Never cap active leases: callbacks can nest.

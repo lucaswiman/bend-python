@@ -31,12 +31,12 @@ for tag in "${python_tags[@]}"; do
   "$python" -m venv "$stage/venv"
   test_python=$stage/venv/bin/python
   "$test_python" -m pip install --no-index --no-deps "$stage/repaired"/*.whl
-  cp -R "$stage/project/tests" "$stage/tests"
+  "$test_python" -m pip install 'setuptools>=80'
   (
     cd "$stage"
     unset PYTHONPATH
     "$test_python" -c 'import pathlib, sys, sysconfig; import bend_example; assert pathlib.Path(bend_example.__file__).is_relative_to(sys.prefix); assert not sysconfig.get_config_var("Py_GIL_DISABLED") or not sys._is_gil_enabled()'
-    "$test_python" -m unittest discover -s tests -p test_bindings.py
+    "$test_python" -m unittest discover -s "$stage/project/tests"
   )
   cp "$stage/repaired"/*.whl "$wheelhouse/"
 done
