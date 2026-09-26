@@ -3,6 +3,7 @@ import importlib.util
 import math
 import os
 from pathlib import Path
+import pickle
 import random
 import struct
 import subprocess
@@ -197,10 +198,18 @@ class NativeBindingsTests(unittest.TestCase):
                     function(*args, **kwargs)
         self.assertEqual(bend_example.square(12), 144)
 
-    def test_exports_report_their_module(self):
+    def test_exports_behave_like_module_functions(self):
         for name in ("square", "echo", "make_dict"):
-            function = getattr(bend_example, name)
-            self.assertEqual(function.__module__, "bend_example")
+            with self.subTest(name=name):
+                function = getattr(bend_example, name)
+                self.assertEqual(function.__name__, name)
+                self.assertEqual(function.__qualname__, name)
+                self.assertEqual(function.__module__, "bend_example")
+                self.assertEqual(repr(function), f"<bend function bend_example.{name}>")
+                self.assertIs(pickle.loads(pickle.dumps(function)), function)
+        self.assertEqual(bend_example.square.__doc__, "A native Bend function.")
+        with self.assertRaises(TypeError):
+            type(bend_example.square)()
 
     @unittest.skipUnless(sys.platform == "linux", "reads /proc/self/statm")
     def test_idle_runtimes_do_not_retain_large_heaps(self):

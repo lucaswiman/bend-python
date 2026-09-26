@@ -36,12 +36,15 @@ static _Thread_local BpRuntime* bp_current;
 #error "F32 narrowing relies on IEEE 754 double-to-float conversion."
 #endif
 
+// An exported Bend function. Its fields are immutable after export, and its
+// captureless Term holds no heap reference, so any runtime instance may run it.
 typedef struct {
-  PyMethodDef method;
+  PyObject_HEAD
   Term function;
   bool release_gil;
-  char* name;
-} BendExport;
+  PyObject* name;
+  PyObject* module;
+} BpFunction;
 
 typedef enum { BP_UNIT, BP_OBJECT, BP_U32, BP_F32, BP_BOOL, BP_STRING, BP_NAT } BpValue;
 typedef enum { BP_INIT, BP_START, BP_RESUME, BP_DROP } BpOperation;
@@ -401,11 +404,54 @@ static PyObject* bp_text(BpCall* call) {
 
 static PyObject* bp_call_python(PyObject*, PyObject*, PyObject*);
 
-static void bp_export_free(PyObject* capsule) {
-  bp_assert_attached();
-  BendExport* entry = PyCapsule_GetPointer(capsule, "bend.export");
-  free(entry->name); free(entry);
+static void bp_function_dealloc(PyObject* self) {
+  BpFunction* function = (BpFunction*)self;
+  Py_XDECREF(function->name); Py_XDECREF(function->module);
+  PyObject_Free(self);
 }
+
+static PyObject* bp_function_name(PyObject* self, void* closure) {
+  return Py_NewRef(((BpFunction*)self)->name);
+}
+
+static PyObject* bp_function_module(PyObject* self, void* closure) {
+  return Py_NewRef(((BpFunction*)self)->module);
+}
+
+static PyObject* bp_function_repr(PyObject* self) {
+  BpFunction* function = (BpFunction*)self;
+  return PyUnicode_FromFormat("<bend function %U.%U>", function->module, function->name);
+}
+
+// Pickle by reference, like a module-level function: module.name.
+static PyObject* bp_function_reduce(PyObject* self, PyObject* unused) {
+  return Py_NewRef(((BpFunction*)self)->name);
+}
+
+static PyGetSetDef bp_function_getset[] = {
+  {"__name__", bp_function_name, NULL, NULL, NULL},
+  {"__qualname__", bp_function_name, NULL, NULL, NULL},
+  {"__module__", bp_function_module, NULL, NULL, NULL},
+  {NULL},
+};
+
+static PyMethodDef bp_function_methods[] = {
+  {"__reduce__", bp_function_reduce, METH_NOARGS, NULL},
+  {NULL},
+};
+
+static PyTypeObject bp_function_type = {
+  PyVarObject_HEAD_INIT(NULL, 0)
+  .tp_name = "bend_python.function",
+  .tp_basicsize = sizeof(BpFunction),
+  .tp_dealloc = bp_function_dealloc,
+  .tp_repr = bp_function_repr,
+  .tp_call = bp_call_python,
+  .tp_flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_IMMUTABLETYPE | Py_TPFLAGS_DISALLOW_INSTANTIATION,
+  .tp_doc = "A native Bend function.",
+  .tp_methods = bp_function_methods,
+  .tp_getset = bp_function_getset,
+};
 
 static bool bp_export(BpCall* call) {
   if (!call->module) { PyErr_SetString(PyExc_RuntimeError, "exports are only allowed during initialization"); return false; }
@@ -417,21 +463,12 @@ static bool bp_export(BpCall* call) {
   if (size == 0 || strlen(text) != (size_t)size || PyObject_HasAttr(call->module, name)) {
     Py_DECREF(name); PyErr_SetString(PyExc_ValueError, "empty, duplicate, or NUL-containing export name"); return false;
   }
-  BendExport* entry = calloc(1, sizeof(BendExport));
-  if (entry) entry->name = strdup(text);
-  Py_DECREF(name);
-  if (!entry || !entry->name) { free(entry); PyErr_NoMemory(); return false; }
-  entry->function = call->fields[1]; entry->release_gil = call->fields[2];
-  entry->method = (PyMethodDef){ entry->name, (PyCFunction)(void(*)(void))bp_call_python,
-    METH_VARARGS | METH_KEYWORDS, "A native Bend function." };
-  PyObject* capsule = PyCapsule_New(entry, "bend.export", bp_export_free);
-  if (!capsule) { free(entry->name); free(entry); return false; }
   PyObject* module_name = PyModule_GetNameObject(call->module);
-  if (!module_name) { Py_DECREF(capsule); return false; }
-  PyObject* function = PyCFunction_NewEx(&entry->method, capsule, module_name);
-  Py_DECREF(capsule); Py_DECREF(module_name);
-  if (!function) return false;
-  int added = PyModule_AddObjectRef(call->module, entry->name, function);
+  BpFunction* function = module_name ? PyObject_New(BpFunction, &bp_function_type) : NULL;
+  if (!function) { Py_DECREF(name); Py_XDECREF(module_name); return false; }
+  function->function = call->fields[1]; function->release_gil = call->fields[2];
+  function->name = name; function->module = module_name;
+  int added = PyModule_AddObjectRef(call->module, text, (PyObject*)function);
   Py_DECREF(function);
   return added == 0;
 }
@@ -612,8 +649,7 @@ static PyObject* bp_call_python(PyObject* self, PyObject* args, PyObject* kwargs
   if (PyInterpreterState_GetID(PyInterpreterState_Get()) != 0) {
     PyErr_SetString(PyExc_RuntimeError, "Bend calls require the main Python interpreter"); return NULL;
   }
-  BendExport* entry = PyCapsule_GetPointer(self, "bend.export");
-  if (!entry) return NULL;
+  BpFunction* entry = (BpFunction*)self;
   BpCall call = { .function = entry->function, .release_gil = entry->release_gil,
     .nargs = (size_t)PyTuple_Size(args) };
   for (size_t i = 0; i < call.nargs; ++i) {
@@ -637,6 +673,7 @@ PyMODINIT_FUNC BENDPY_INIT(void) {
   if (PyInterpreterState_GetID(PyInterpreterState_Get()) != 0) {
     PyErr_SetString(PyExc_ImportError, "Bend currently supports only the main Python interpreter"); return NULL;
   }
+  if (PyType_Ready(&bp_function_type) < 0) return NULL;
   PyObject* module = PyModule_Create(&bp_definition);
   if (!module) return NULL;
 #ifdef Py_GIL_DISABLED
