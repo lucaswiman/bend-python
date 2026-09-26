@@ -26,10 +26,14 @@ static _Thread_local BpRuntime* bp_current;
 #define io_stk (bp_current->stack)
 #define corpus_size (bp_current->heap_size)
 // BENDPY_RUNTIME_CONTEXT_END
+// The build includes Python.h before the runtime's standard headers.
 #include <Python.h>
 
 #if BANGS
 #error "GPU entry points are not supported by this embedding."
+#endif
+#ifndef __STDC_IEC_559__
+#error "F32 narrowing relies on IEEE 754 double-to-float conversion."
 #endif
 
 typedef struct {
@@ -66,6 +70,9 @@ static size_t bp_idle_count;
 #define BP_IDLE_LIMIT 8
 #define BP_STACK_BYTES (1ull << 31)
 #define BP_STACK_GUARD 16384
+// Instances whose heap grew past this are unmapped rather than cached, so idle
+// instances cannot pin a large call's resident pages until process exit.
+#define BP_IDLE_HEAP_BYTES (32ull << 20)
 
 static void bp_assert_attached(void) {
   // PyThreadState_Get fails fatally if this thread is detached, including on
@@ -108,12 +115,19 @@ static BpRuntime* bp_runtime_acquire(void) {
   return runtime;
 }
 
+static bool bp_runtime_reusable(BpRuntime* runtime) {
+  if (runtime->poisoned) return false;
+  if (runtime->heap == NULL) return true;
+  u64 pages = a32_load(a32_at(runtime->heap, H_BUMP));
+  return (HEAP_OFF + (pages << PAGE_BITS)) * sizeof(u64) <= BP_IDLE_HEAP_BYTES;
+}
+
 static void bp_runtime_release(BpRuntime* runtime) {
   bp_assert_attached();
   PyThreadState* thread = PyEval_SaveThread();
-  bool retained = false;
+  bool retained = false, reusable = bp_runtime_reusable(runtime);
   pthread_mutex_lock(&bp_pool_mutex);
-  if (!runtime->poisoned && bp_idle_count < BP_IDLE_LIMIT) {
+  if (reusable && bp_idle_count < BP_IDLE_LIMIT) {
     runtime->next = bp_idle;
     bp_idle = runtime;
     ++bp_idle_count;
@@ -141,8 +155,12 @@ static Term bp_apply(Env e, Term function, Term argument) {
   return corpus_eval(e.mem, term_tsk(FID_CLO_APPLY, at));
 }
 
+// Object wrappers may be packed or boxed on the heap. Anything else means the
+// private runtime representation changed, so fail loudly rather than guess.
 static u32 bp_unbox(Env e, Term object) {
+  if (term_aux(object) != CID(PyObject)) bendpy_panic("expected a Python object handle");
   if (term_tag(object) == TAG_PAK) return (u32)term_loc(object);
+  if (term_tag(object) != TAG_CTR) bendpy_panic("unexpected Python object representation");
   Term field;
   spare_free(e, 0, ctr_take(e, object, 1, &field));
   return (u32)field;
@@ -153,8 +171,8 @@ static void bp_read_list(Env e, Term list, BpCall* call, bool string) {
   u32* data = bp_alloc(capacity * sizeof(u32));
   // Store before traversal so a runtime failure still frees the host buffer.
   if (string) call->text = data; else call->items = data;
-  u32 cons = string ? CID(SCon) : CID(Con);
-  while (term_aux(list) == cons) {
+  u32 cons = string ? CID(SCon) : CID(Con), nil = string ? CID(SNil) : CID(Nil);
+  while (term_tag(list) == TAG_CTR && term_aux(list) == cons) {
     Term fields[2];
     spare_free(e, 1, ctr_take(e, list, 2, fields));
     if (length == capacity) {
@@ -167,6 +185,9 @@ static void bp_read_list(Env e, Term list, BpCall* call, bool string) {
     data[length++] = string ? (u32)fields[0] : bp_unbox(e, fields[0]);
     list = fields[1];
   }
+  if ((term_tag(list) != TAG_PAK && term_tag(list) != TAG_CTR) || term_aux(list) != nil)
+    bendpy_panic("unexpected Bend list representation");
+  term_drop(e, list);
   if (string) call->text_length = length; else call->length = length;
 }
 
@@ -270,11 +291,15 @@ static void bp_decode(Env e, BpCall* call) {
 
 static bool bp_native(BpCall* call, BpOperation operation) {
   bp_assert_attached();
+#ifdef Py_GIL_DISABLED
+  // Without a GIL, staying attached only delays stop-the-world pauses.
+  PyThreadState* thread = PyEval_SaveThread();
+#else
   PyThreadState* thread = call->release_gil ? PyEval_SaveThread() : NULL;
+#endif
   bp_current = call->runtime;
-  if (bp_current->poisoned) {
-    snprintf(call->error, sizeof(call->error), "Bend runtime is unusable after a previous failure");
-  } else if (setjmp(bp_current->escape)) {
+  // Poisoned instances are never cached, so every lease starts healthy.
+  if (setjmp(bp_current->escape)) {
     snprintf(call->error, sizeof(call->error), "%s", bp_current->error);
   } else {
     if (CORPUS == NULL) {
@@ -401,11 +426,13 @@ static bool bp_export(BpCall* call) {
     METH_VARARGS | METH_KEYWORDS, "A native Bend function." };
   PyObject* capsule = PyCapsule_New(entry, "bend.export", bp_export_free);
   if (!capsule) { free(entry->name); free(entry); return false; }
-  PyObject* function = PyCFunction_NewEx(&entry->method, capsule, NULL);
-  Py_DECREF(capsule);
+  PyObject* module_name = PyModule_GetNameObject(call->module);
+  if (!module_name) { Py_DECREF(capsule); return false; }
+  PyObject* function = PyCFunction_NewEx(&entry->method, capsule, module_name);
+  Py_DECREF(capsule); Py_DECREF(module_name);
   if (!function) return false;
-  int added = PyModule_AddObject(call->module, entry->name, function);
-  if (added < 0) Py_DECREF(function);
+  int added = PyModule_AddObjectRef(call->module, entry->name, function);
+  Py_DECREF(function);
   return added == 0;
 }
 
@@ -446,6 +473,7 @@ static bool bp_effect(BpCall* call) {
     case CID(to_f32): {
       a = bp_get(call, f[0]); if (!a) return false;
       if (!PyFloat_Check(a)) { PyErr_SetString(PyExc_TypeError, "expected a float"); return false; }
+      // IEEE 754 narrowing (Annex F): round to nearest, overflowing to infinity.
       union { float f; u32 u; } x = { .f = (float)PyFloat_AsDouble(a) };
       call->result_kind = BP_F32; call->result = x.u; return true;
     }

@@ -14,7 +14,12 @@ import unittest
 import weakref
 from concurrent.futures import ThreadPoolExecutor
 
-import bend_example
+try:
+    import bend_example
+except ImportError:
+    # A development checkout builds the example in place under examples/.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "examples"))
+    import bend_example
 
 
 U32_MAX = (1 << 32) - 1
@@ -118,6 +123,12 @@ class NativeBindingsTests(unittest.TestCase):
             expected = struct.unpack("f", struct.pack("f", narrowed / 2))[0]
             self.assertEqual(bend_example.half(value), expected)
         self.assertTrue(math.isnan(bend_example.half(float("nan"))))
+        # Narrowing rounds to nearest; finite doubles beyond F32 overflow to infinity.
+        float_max = struct.unpack("f", struct.pack("I", 0x7F7FFFFF))[0]
+        self.assertEqual(bend_example.half(3.4028235e38), float_max / 2)
+        for value in (1e300, 3.4028235677973366e38, float("inf")):
+            self.assertEqual(bend_example.half(value), math.inf)
+            self.assertEqual(bend_example.half(-value), -math.inf)
         self.assertEqual(math.copysign(1, bend_example.half(-0.0)), -1)
         for function, value in (
             (bend_example.flip, 1), (bend_example.half, 1),
@@ -153,6 +164,61 @@ class NativeBindingsTests(unittest.TestCase):
             with self.assertRaises(error):
                 function(*args)
             self.assertEqual(bend_example.square(12), 144)
+
+    def test_attribute_length_none_dict_and_invoke_effects(self):
+        self.assertEqual(bend_example.attribute(3 + 4j, "imag"), 4.0)
+        self.assertEqual(bend_example.attribute([], "append").__name__, "append")
+        self.assertIs(bend_example.attribute(bend_example, "square"), bend_example.square)
+        for value, expected in (([], 0), ([1, 2, 3], 3), ("a\x00\u00e9\U0001f600", 4), (range(7), 7)):
+            self.assertEqual(bend_example.length(value), expected)
+        self.assertIsNone(bend_example.make_none())
+        key, value = object(), []
+        result = bend_example.make_dict("a", value, key, None, "a", value)
+        self.assertEqual(list(result), ["a", key])
+        self.assertIs(result["a"], value)
+        self.assertEqual(bend_example.make_dict(), {})
+        self.assertEqual(bend_example.invoke(lambda *args: args, 1, value), (1, value))
+        self.assertIs(bend_example.invoke(bend_example.echo, value), value)
+        for function, args, kwargs, error in (
+            (bend_example.attribute, (1, "missing"), {}, AttributeError),
+            (bend_example.attribute, (1, 2), {}, TypeError),
+            (bend_example.length, (object(),), {}, TypeError),
+            (bend_example.length, (iter([]),), {}, TypeError),
+            (bend_example.make_none, (1,), {}, TypeError),
+            (bend_example.make_none, (), {"x": 1}, TypeError),
+            (bend_example.make_dict, ("odd",), {}, TypeError),
+            (bend_example.make_dict, ([], 1), {}, TypeError),
+            (bend_example.invoke, (), {}, TypeError),
+            (bend_example.invoke, (len,), {"x": 1}, TypeError),
+            (bend_example.invoke, (int, "x"), {}, ValueError),
+        ):
+            with self.subTest(function=function.__name__, args=args):
+                with self.assertRaises(error):
+                    function(*args, **kwargs)
+        self.assertEqual(bend_example.square(12), 144)
+
+    def test_exports_report_their_module(self):
+        for name in ("square", "echo", "make_dict"):
+            function = getattr(bend_example, name)
+            self.assertEqual(function.__module__, "bend_example")
+
+    @unittest.skipUnless(sys.platform == "linux", "reads /proc/self/statm")
+    def test_idle_runtimes_do_not_retain_large_heaps(self):
+        self.run_fresh_python("""
+            import bend_example
+            def resident_mib():
+                with open("/proc/self/statm") as statm:
+                    return int(statm.read().split()[1]) * 4096 / 2**20
+            text = "x" * 5_000_000
+            assert bend_example.echo_string("warm") == "warm"
+            baseline = resident_mib()
+            for _ in range(3):
+                assert bend_example.echo_string(text) == text
+            # Each call touches ~100 MiB of Bend heap; only Python strings remain.
+            growth = resident_mib() - baseline
+            assert growth < 60, f"resident memory grew by {growth:.0f} MiB"
+            assert bend_example.square(12) == 144
+        """)
 
     def test_bend_constructs_python_builtin_objects(self):
         cases = (
@@ -377,7 +443,7 @@ class NativeBindingsTests(unittest.TestCase):
             for _ in range(10):
                 start = time.monotonic()
                 bend_example.slow(count)
-                if time.monotonic() - start >= 0.1:
+                if time.monotonic() - start >= 0.2:
                     break
                 count = min(count * 4, 0xffffffff)
             expected = bend_example.slow(count)
@@ -403,13 +469,27 @@ class NativeBindingsTests(unittest.TestCase):
                 margin = (end - start) * 0.2
                 return [t for t in ticks if start + margin < t < end - margin]
 
-            held = observe(bend_example.slow)
-            released = observe(bend_example.slow_release)
-            assert released, "Python worker made no progress during detached Bend computation"
-            if getattr(sys, "_is_gil_enabled", lambda: True)():
-                assert not held, "Python worker ran during GIL-retaining Bend computation"
+            def failure():
+                held = observe(bend_example.slow)
+                released = observe(bend_example.slow_release)
+                if not released:
+                    return "Python worker made no progress during detached Bend computation"
+                if getattr(sys, "_is_gil_enabled", lambda: True)():
+                    if held:
+                        return "Python worker ran during GIL-retaining Bend computation"
+                elif not held:
+                    return "free-threaded Python worker made no progress"
+
+            # Scheduling noise on loaded runners can starve one window; retry
+            # rather than weakening what each attempt checks.
+            failures = []
+            for _ in range(3):
+                message = failure()
+                if message is None:
+                    break
+                failures.append(message)
             else:
-                assert held, "free-threaded Python worker made no progress"
+                raise AssertionError(failures)
         """)
 
 

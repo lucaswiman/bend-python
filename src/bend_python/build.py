@@ -1,5 +1,6 @@
 """Setuptools integration for the pinned Bend native compiler."""
 
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
@@ -44,8 +45,9 @@ class BendExtension(Extension):
 
 
 def _compiler():
-    local = Path(".tools/bend/bin/bend")
-    bend = os.environ.get("BEND") or (str(local.resolve()) if local.exists() else shutil.which("bend"))
+    # A checkout's bootstrapped compiler, never one found relative to the cwd.
+    local = Path(__file__).resolve().parents[2] / ".tools/bend/bin/bend"
+    bend = os.environ.get("BEND") or (str(local) if local.exists() else shutil.which("bend"))
     if not bend:
         raise RuntimeError(f"Install Bend {BEND_VERSION} or set BEND to its executable")
     version = subprocess.check_output([bend, "version"], text=True).strip()
@@ -101,6 +103,8 @@ static u32            pool_size;'''
 }'''),
         ("int main(int argc, char** argv) {", "static int bendpy_unused_main(int argc, char** argv) {"),
         ("#define WL_OPEN    { WL_BANK u32 rn;", "#define WL_OPEN    { WL_BANK u32 rn = 0;"),
+        # Python.h is included first and already selects the GNU feature set.
+        ("#define _GNU_SOURCE\n", "#ifndef _GNU_SOURCE\n#define _GNU_SOURCE\n#endif\n"),
     ]:
         if source.count(old) != 1:
             raise RuntimeError("Bend runtime changed; refusing an unreviewed embedding patch")
@@ -117,6 +121,7 @@ static u32            pool_size;'''
     if count != 1:
         raise RuntimeError("Bend register layout changed")
     prefix = (
+        "#define PY_SSIZE_T_CLEAN\n#include <Python.h>\n"
         "static void bendpy_panic(const char*) __attribute__((noreturn));\n"
         f"#define BENDPY_MODULE_NAME {json.dumps(name)}\n"
         f"#define BENDPY_INIT PyInit_{name.rsplit('.', 1)[-1]}\n"
@@ -127,30 +132,35 @@ static u32            pool_size;'''
 class BendBuildExt(build_ext):
     """Proof-check, emit C, and compile BendExtension instances with Clang."""
 
-    def run(self):
-        if sys.platform != "linux":
-            raise RuntimeError("The pinned Bend embedding runtime currently supports Linux only")
-        default_cc = "CC" not in os.environ
-        if default_cc:
-            os.environ["CC"] = "clang"
-        try:
-            super().run()
-        finally:
-            if default_cc:
-                del os.environ["CC"]
-
-    def build_extensions(self):
-        command = getattr(self.compiler, "compiler_so", None)
-        if not command:
+    @contextmanager
+    def _clang(self):
+        """Compile with Clang without changing the environment or other extensions."""
+        compiler = self.compiler
+        commands = {name: getattr(compiler, name, None) for name in ("compiler_so", "linker_so")}
+        if not commands["compiler_so"] or not commands["linker_so"]:
             raise RuntimeError("Bend extensions require a Unix Clang compiler")
-        version = subprocess.check_output([*command, "--version"], text=True)
+        replacements = {}
+        if "CC" not in os.environ:
+            # Replace only the driver; keep sysconfig's flags such as -pthread and -shared.
+            clang = shutil.which("clang")
+            if not clang:
+                raise RuntimeError("Bend generated C requires Clang; install it or set CC=clang")
+            replacements = {name: [clang, *command[1:]] for name, command in commands.items()}
+        driver = replacements.get("compiler_so", commands["compiler_so"])
+        version = subprocess.check_output([*driver, "--version"], text=True)
         if "clang" not in version.lower():
             raise RuntimeError("Bend generated C requires Clang; set CC=clang")
-        super().build_extensions()
+        compiler.set_executables(**replacements)
+        try:
+            yield
+        finally:
+            compiler.set_executables(**commands)
 
     def build_extension(self, extension):
         if not isinstance(extension, BendExtension):
             return super().build_extension(extension)
+        if sys.platform != "linux":
+            raise RuntimeError("The pinned Bend embedding runtime currently supports Linux only")
         bend = _compiler()
         proofs = list(extension.bend_proofs)
         library = library_path()
@@ -165,7 +175,8 @@ class BendBuildExt(build_ext):
         sources = extension.sources
         extension.sources = [str(generated)]
         try:
-            super().build_extension(extension)
+            with self._clang():
+                super().build_extension(extension)
         finally:
             extension.sources = sources
 

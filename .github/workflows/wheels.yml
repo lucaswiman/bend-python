@@ -2,6 +2,7 @@ name: Linux wheels
 
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -16,10 +17,10 @@ jobs:
       matrix:
         python: [cp310-cp310, cp311-cp311, cp312-cp312, cp313-cp313, cp314-cp314, cp314-cp314t]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - name: Build compiler image
         run: docker build --file docker/Dockerfile --tag bend-python-manylinux .
-      - name: Build, repair, and test installed wheel
+      - name: Build SDK and example wheels, then test the installed example
         run: |
           mkdir -p wheelhouse
           docker run --rm \
@@ -28,7 +29,7 @@ jobs:
             --volume "$PWD:/io:ro" \
             --volume "$PWD/wheelhouse:/wheelhouse" \
             bend-python-manylinux
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: wheels-${{ matrix.python }}-manylinux_x86_64
           path: wheelhouse/*.whl

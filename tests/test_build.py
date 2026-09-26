@@ -85,14 +85,15 @@ class BuildTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         directory = Path(temporary.name)
-        for filename in ("setup.py", "pyproject.toml"):
-            shutil.copy(ROOT / filename, directory)
-        for name in ("bend", "examples", "src"):
-            shutil.copytree(ROOT / name, directory / name,
-                            ignore=shutil.ignore_patterns("*.so", "__pycache__"))
+        ignored = shutil.ignore_patterns("*.so", "__pycache__", "build", "*.egg-info")
+        for name in ("bend", "src"):
+            shutil.copytree(ROOT / name, directory / name, ignore=ignored)
+        # The example vendors the SDK library itself; never reuse a stale copy.
+        shutil.copytree(ROOT / "examples", directory / "examples",
+                        ignore=shutil.ignore_patterns("bend", "*.so", "__pycache__", "build"))
         if module is not None:
             (directory / "examples/module.bend").write_text(
-                'import Base\nimport ../bend/python.bend as Python\n' + module
+                'import Base\nimport ./bend/python.bend as Python\n' + module
             )
         if break_proof:
             arithmetic = directory / "examples/arithmetic.bend"
@@ -110,16 +111,18 @@ class BuildTests(unittest.TestCase):
             shim.write_text(source.replace(
                 evaluator, "  bp_test_enter(e.mem);\n" + evaluator,
             ))
+        # Build the example project against this checkout's SDK sources.
         result = subprocess.run(
             [sys.executable, "setup.py", "build_ext", "--inplace"],
-            cwd=directory, env={**os.environ, "CC": "clang", "BEND": BEND},
+            cwd=directory / "examples",
+            env={**os.environ, "CC": "clang", "BEND": BEND, "PYTHONPATH": str(directory / "src")},
             text=True, capture_output=True, timeout=60,
         )
         return directory, result
 
     def run_python(self, directory, source):
         result = subprocess.run(
-            [sys.executable, "-X", "faulthandler", "-c", source], cwd=directory,
+            [sys.executable, "-X", "faulthandler", "-c", source], cwd=directory / "examples",
             env={**os.environ, "PYTHONPATH": str(directory / "src")},
             text=True, capture_output=True, timeout=30,
         )

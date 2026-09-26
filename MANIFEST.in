@@ -1,4 +1,3 @@
 include bend/*.bend bend/*.c
-include examples/*.bend
 include AGENTS.md scripts/bootstrap.sh
 recursive-include src/bend_python *.py

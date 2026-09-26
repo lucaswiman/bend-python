@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Run inside docker/Dockerfile; mount the source read-only at /io.
+# Builds the pure SDK wheel once, then builds, repairs, and tests the example
+# extension for each ABI against that installed SDK wheel.
 set -euo pipefail
 source_dir=$(realpath "${1:-/io}")
 wheelhouse=${WHEELHOUSE:-/wheelhouse}
@@ -12,26 +14,44 @@ wheelhouse=$(realpath "$wheelhouse")
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
+# Each build gets a clean source tree; never reuse host-built or vendored files.
+copy_source() {
+  mkdir -p "$1"
+  tar -C "$source_dir" --exclude=.git --exclude=.tools --exclude=.venv \
+    --exclude=build --exclude=dist --exclude=wheelhouse --exclude='*.so' \
+    --exclude='*.egg-info' --exclude=__pycache__ --exclude=./examples/bend -cf - . \
+    | tar -C "$1" -xf -
+}
+
 for tag in "${python_tags[@]}"; do
-  python=/opt/python/$tag/bin/python
-  if [[ ! -x $python ]]; then
+  if [[ ! -x /opt/python/$tag/bin/python ]]; then
     echo "Interpreter $tag is absent from this manylinux image." >&2
     exit 1
   fi
+done
+
+copy_source "$work/sdk"
+"/opt/python/${python_tags[0]}/bin/python" -m build --outdir "$work/sdk-dist" "$work/sdk"
+sdk_wheels=("$work/sdk-dist"/bend_python-*-py3-none-any.whl)
+if [[ ${#sdk_wheels[@]} -ne 1 || ! -f ${sdk_wheels[0]} ]]; then
+  echo "Expected exactly one pure bend-python SDK wheel." >&2
+  exit 1
+fi
+sdk_wheel=${sdk_wheels[0]}
+
+for tag in "${python_tags[@]}"; do
+  python=/opt/python/$tag/bin/python
   stage=$work/$tag
-  mkdir -p "$stage/project" "$stage/repaired"
-  # Each ABI gets a clean source tree; never reuse a host-built extension.
-  tar -C "$source_dir" --exclude=.git --exclude=.tools --exclude=.venv \
-    --exclude=build --exclude=dist --exclude=wheelhouse --exclude='*.so' \
-    --exclude='*.egg-info' --exclude=__pycache__ -cf - . \
-    | tar -C "$stage/project" -xf -
-  "$python" -m build --outdir "$stage/dist" "$stage/project"
-  auditwheel repair --plat manylinux_2_28_x86_64 \
-    --wheel-dir "$stage/repaired" "$stage/dist"/*.whl
+  copy_source "$stage/project"
   "$python" -m venv "$stage/venv"
   test_python=$stage/venv/bin/python
+  "$test_python" -m pip install --no-index --no-deps "$sdk_wheel"
+  "$test_python" -m pip install 'setuptools>=80' build
+  # --no-isolation uses the installed SDK wheel; the wheel is built from an sdist.
+  "$test_python" -m build --no-isolation --outdir "$stage/dist" "$stage/project/examples"
+  auditwheel repair --plat manylinux_2_28_x86_64 \
+    --wheel-dir "$stage/repaired" "$stage/dist"/*.whl
   "$test_python" -m pip install --no-index --no-deps "$stage/repaired"/*.whl
-  "$test_python" -m pip install 'setuptools>=80'
   (
     cd "$stage"
     unset PYTHONPATH
@@ -40,3 +60,4 @@ for tag in "${python_tags[@]}"; do
   )
   cp "$stage/repaired"/*.whl "$wheelhouse/"
 done
+cp "$sdk_wheel" "$wheelhouse/"

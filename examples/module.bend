@@ -1,5 +1,5 @@
 import Base
-import ../bend/python.bend as Python
+import ./bend/python.bend as Python
 import ./arithmetic.bend as Arithmetic
 
 def echo(request: Python.Call) -> IO(Python.Object):
@@ -64,6 +64,64 @@ def construct(request: Python.Call) -> IO(Python.Object):
     case _:
       Python.type_error(Python.Object, "expected a builtin name as the first argument")
 
+def attribute_values(values: Pair(Python.Object, Python.Object)) -> IO(Python.Object):
+  (value, name) = values
+  do IO<Python.Object>:
+    text : String <- Python.to_string(name)
+    Python.getattr(value, text)
+
+def attribute(request: Python.Call) -> IO(Python.Object):
+  do IO<Python.Object>:
+    values : Pair(Python.Object, Python.Object) <- Python.binary(request)
+    attribute_values(values)
+
+def length_value(value: Python.Object) -> IO(Python.Object):
+  do IO<Python.Object>:
+    n : Nat <- Python.len(value)
+    Python.from_u32(U32.from_nat(n))
+
+def length(request: Python.Call) -> IO(Python.Object):
+  do IO<Python.Object>:
+    value : Python.Object <- Python.unary(request)
+    length_value(value)
+
+def make_none(request: Python.Call) -> IO(Python.Object):
+  match request:
+    case Python.PyCall{[], keywords}:
+      do IO<Python.Object>:
+        Python.require_no_kwargs(keywords)
+        Python.none()
+    case _:
+      Python.type_error(Python.Object, "expected no arguments")
+
+def entries(args: List<Python.Object>) -> IO(List<Pair(Python.Object, Python.Object)>):
+  match args:
+    case []:
+      IO.pure(List<Pair(Python.Object, Python.Object)>, [])
+    case [_]:
+      Python.type_error(List<Pair(Python.Object, Python.Object)>, "expected alternating keys and values")
+    case key <> value <> tail:
+      do IO<List<Pair(Python.Object, Python.Object)>>:
+        rest : List<Pair(Python.Object, Python.Object)> <- entries(tail)
+        return (key, value) <> rest
+
+def make_dict(request: Python.Call) -> IO(Python.Object):
+  match request:
+    case Python.PyCall{args, keywords}:
+      do IO<Python.Object>:
+        Python.require_no_kwargs(keywords)
+        items : List<Pair(Python.Object, Python.Object)> <- entries(args)
+        Python.dict(items)
+
+def invoke(request: Python.Call) -> IO(Python.Object):
+  match request:
+    case Python.PyCall{function <> args, keywords}:
+      do IO<Python.Object>:
+        Python.require_no_kwargs(keywords)
+        Python.invoke(function, args)
+    case _:
+      Python.type_error(Python.Object, "expected a callable as the first argument")
+
 def main() -> IO(Unit):
   do IO<Unit>:
     Python.export_u32(~(x => Arithmetic.square(x)), "square", False{})
@@ -83,3 +141,8 @@ def main() -> IO(Unit):
     Python.export("construct", construct, False{})
     Python.export_u32(~Arithmetic.slow, "slow", False{})
     Python.export_u32(~Arithmetic.slow, "slow_release", True{})
+    Python.export("attribute", attribute, False{})
+    Python.export("length", length, False{})
+    Python.export("make_none", make_none, False{})
+    Python.export("make_dict", make_dict, False{})
+    Python.export("invoke", invoke, False{})
