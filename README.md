@@ -213,8 +213,11 @@ docker run --rm --user "$(id -u):$(id -g)" \
 ```
 
 [CI](https://github.com/lucaswiman/bend-python/blob/main/.github/workflows/wheels.yml)
-runs that recipe per version, `prek`, and `twine check` on the SDK. Pushing a
-`v*` tag matching the project version publishes the SDK to PyPI with `uv publish`
-([release workflow](https://github.com/lucaswiman/bend-python/blob/main/.github/workflows/release.yml),
-trusted publishing). [`AGENTS.md`](https://github.com/lucaswiman/bend-python/blob/main/AGENTS.md)
+runs that recipe per version, `prek`, and `twine check` on the SDK. Record changes
+under "Unreleased" in [`CHANGELOG.md`](https://github.com/lucaswiman/bend-python/blob/main/CHANGELOG.md).
+To release, move them to a dated `## [X.Y.Z] - YYYY-MM-DD` section matching the
+project version and publish a GitHub release tagged `vX.Y.Z`; the
+[release workflow](https://github.com/lucaswiman/bend-python/blob/main/.github/workflows/release.yml)
+checks both, then publishes the SDK to PyPI by trusted publishing, with
+provenance attestations. [`AGENTS.md`](https://github.com/lucaswiman/bend-python/blob/main/AGENTS.md)
 has notes for contributors and coding agents.

@@ -33,6 +33,7 @@ classifiers = [
 Homepage = "https://github.com/lucaswiman/bend-python"
 Source = "https://github.com/lucaswiman/bend-python"
 Issues = "https://github.com/lucaswiman/bend-python/issues"
+Changelog = "https://github.com/lucaswiman/bend-python/blob/main/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
 where = ["src"]

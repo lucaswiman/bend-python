@@ -9,20 +9,31 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same branch or PR supersedes older runs.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint:
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
+        with:
+          enable-cache: true
       # Proofs are checked by every wheel build below, which has Bend installed.
       - run: SKIP=bend-proofs uvx prek@0.5.3 run --all-files --show-diff-on-failure
 
   sdk:
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
+        with:
+          enable-cache: true
       - run: uv build
       # Validates metadata and that the README renders on PyPI.
       - run: uvx twine check --strict dist/*
@@ -31,6 +42,7 @@ jobs:
 
   manylinux:
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
