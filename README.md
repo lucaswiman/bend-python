@@ -9,6 +9,11 @@ Python calls execute in-process. Installed wheels require neither Bend nor a C
 compiler. This is an experimental binding implementation, not an upstream Bend
 API or a formally verified CPython bridge.
 
+**Bend 2 is still immature, and string-heavy code can be very inefficient.**
+The pinned native runtime represents strings as linked character nodes, with
+substantial memory and traversal costs. Treat this project as experimental and
+benchmark your actual workloads before relying on it for performance.
+
 ## Try the examples
 
 With `uv`, Clang 14+, `curl`, and `tar` installed:
@@ -152,6 +157,16 @@ narrows it to single precision. Use the generic object API when exact Python
 integer/float behavior is required. String conversion preserves Unicode
 codepoints, including lone surrogates. Typed adapters reject unexpected arity
 and keywords with `TypeError`.
+
+Passing a string as `Python.Object` preserves the original object without copying
+its contents. Converting it with `to_string` or `export_string` copies its
+codepoints and constructs Bend's linked-list `String`; converting back rebuilds
+a Python string. Dynamic character nodes occupy about 16 bytes each before
+allocator and sharing overhead. Memory pools and node reuse reduce allocation
+costs, but do not remove that representation or the conversion costs. Large-text
+workloads can therefore consume much more memory and time than expected.
+See the upstream [string allocation/locality report](https://github.com/bendlang/bend/issues/1007)
+and [proposal for buffer-backed strings](https://github.com/bendlang/bend/pull/873).
 
 See [`examples/module.bend`](examples/module.bend) for generic callbacks,
 container mutation, construction, keyword handling, and typed exports.
