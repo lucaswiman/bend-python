@@ -103,3 +103,60 @@ def Laws.failed_context_unavailable(cache_space, pool, slot):
 
 def Laws.successful_context_reusable():
   {==}
+
+def pool_none_discriminator(value: Maybe<List<&2, Thread.Context>>) -> Type:
+  match value:
+    case None{}:
+      Unit
+    case Some{_}:
+      Empty
+
+def pool_none_not_some(-next: List<&2, Thread.Context>,
+  acquired: {None{} == Some{next} : Maybe<List<&2, Thread.Context>>}) -> Empty:
+  %acquired : pool_none_discriminator(_)
+  Unit{}
+
+def acquire_if_allowed(allowed: Bool, -pool: List<&2, Thread.Context>, -slot: Nat,
+  -next: List<&2, Thread.Context>,
+  acquired: {Thread.acquire_if(allowed, pool, slot) == Some{next} : Maybe<List<&2, Thread.Context>>})
+  -> {allowed == True{} : Bool}:
+  match allowed:
+    case True{}:
+      {==}
+    case False{}:
+      Empty.absurd({False{} == True{} : Bool}, pool_none_not_some(next, acquired))
+
+def Laws.acquisition_requires_available(pool, slot, next, acquired):
+  acquire_if_allowed(Thread.available(pool, slot), pool, slot, next, acquired)
+
+def idle_discriminator(value: Thread.Context) -> Type:
+  match value:
+    case Thread.Idle{}:
+      Empty
+    case Thread.Leased{}:
+      Unit
+    case Thread.Discarded{}:
+      Unit
+
+def discarded_empty(reusable: {Thread.Discarded{} == Thread.Idle{} : Thread.Context}) -> Empty:
+  %reusable : idle_discriminator(_)
+  Unit{}
+
+def discarded_not_idle(-A: Type, reusable: {Thread.Discarded{} == Thread.Idle{} : Thread.Context}) -> A:
+  Empty.absurd(A, discarded_empty(reusable))
+
+def Laws.reusable_requires_success(outcome, cache_space, reusable):
+  match outcome cache_space:
+    case Thread.Succeeded{} _:
+      {==}
+    case Thread.Failed{} _:
+      discarded_not_idle({Thread.Failed{} == Thread.Succeeded{} : Thread.Outcome}, reusable)
+
+def Laws.reusable_requires_cache_space(outcome, cache_space, reusable):
+  match outcome cache_space:
+    case _ True{}:
+      {==}
+    case Thread.Succeeded{} False{}:
+      discarded_not_idle({False{} == True{} : Bool}, reusable)
+    case Thread.Failed{} False{}:
+      discarded_not_idle({False{} == True{} : Bool}, reusable)

@@ -49,3 +49,15 @@ law pair_exact_arity:
   for right: Python.Object
   for success: {Python.pair(xs) == Some{(left, right)} : Maybe<Pair(Python.Object, Python.Object)>}
   {Python.arity(xs) == 2n : Nat}
+
+# Converses of the exact-arity laws: every list of the right length parses.
+# Together these characterize the pure parsers; the IO wrappers are not covered.
+law singleton_complete:
+  for xs: List<Python.Object>
+  for exact: {Python.arity(xs) == 1n : Nat}
+  {Python.singleton(xs) == Python.argument(xs, 0n) : Maybe<Python.Object>}
+
+law pair_complete:
+  for xs: List<Python.Object>
+  for exact: {Python.arity(xs) == 2n : Nat}
+  {Python.pair(xs) == Maybe.bind(&1, Python.Object, Pair(Python.Object, Python.Object), Python.argument(xs, 0n), left => Maybe.bind(&1, Python.Object, Pair(Python.Object, Python.Object), Python.argument(xs, 1n), right => Some{(left, right)})) : Maybe<Pair(Python.Object, Python.Object)>}

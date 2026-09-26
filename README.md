@@ -21,8 +21,9 @@ With `uv`, Clang 14+, `curl`, and `tar` installed:
 ```sh
 bash scripts/bootstrap.sh
 uv pip install --python .venv/bin/python --no-build-isolation -e .
+(cd examples && CC=clang ../.venv/bin/python setup.py build_ext --inplace)
 .venv/bin/python -m unittest discover -s tests
-.venv/bin/python
+cd examples && ../.venv/bin/python
 ```
 
 ```python
@@ -44,8 +45,11 @@ bend.call(lambda x: bend.square(x), 12)  # 144; reentrant callbacks work
 
 The bootstrap installs Python 3.14, the checksum-verified Bend compiler, and
 build tools under this checkout. Set `BEND` to use another installation of the
-same compiler version. Rebuild after editing Bend with
-`CC=clang .venv/bin/python setup.py build_ext --inplace`.
+same compiler version. The `bend-python` SDK itself is a pure Python wheel; the
+example in [`examples/`](examples) is a separate project (`bend-python-example`)
+built with that SDK, exactly as your own extension would be. Rebuild it after
+editing Bend with the `build_ext --inplace` command above; its `setup.py`
+re-vendors the SDK's Bend library into the untracked `examples/bend/`.
 
 ## Create your own extension
 
@@ -99,6 +103,8 @@ setup(
 `proofs` lists your application proof entry points; omit it if you have none.
 The SDK's own proofs are checked automatically. For source distributions, add
 `include *.bend` and `recursive-include bend *.bend *.c` to `MANIFEST.in`.
+[`examples/setup.py`](examples/setup.py) instead calls `vendor(..., force=True)`
+on every build, keeping an untracked copy in sync with the installed SDK.
 
 Add a `pyproject.toml` build-system section:
 
@@ -135,8 +141,11 @@ array/buffer computation support is future work.
 
 A `Python.Object` is an invocation-scoped handle backed by a strong Python
 reference. It is not the object's memory address. Do not construct handles
-manually or save them for later calls. The bridge validates handles and releases
-all temporary references when the invocation finishes, preserving its result.
+manually or save them for later calls. The bridge bounds-checks handles against
+the current invocation, so a forged handle is either rejected or aliases another
+object from the same call; it cannot reach freed memory or another call's objects.
+All temporary references are released when the invocation finishes, preserving
+its result.
 
 | Bend API | Behavior |
 |---|---|
@@ -192,6 +201,10 @@ On conventional CPython that reacquires the GIL. On free-threaded CPython it
 restores the attached thread state; Python's thread-safe APIs supply the object
 synchronization. Importing a free-threaded wheel does not enable the GIL.
 
+Free-threaded builds always detach during pure Bend evaluation, whatever the
+flag says: there is no GIL to keep, and an attached thread would stall other
+threads' stop-the-world pauses (such as garbage collection) until it finished.
+
 For example, use multiple Python threads with an export that releases the GIL:
 
 ```python
@@ -202,7 +215,7 @@ with ThreadPoolExecutor(max_workers=4) as pool:
     results = list(pool.map(bend.slow_release, [100_000_000] * 4))
 ```
 
-On free-threaded Python, even exports with `False{}` may run concurrently.
+On free-threaded Python, exports with `False{}` also run concurrently.
 Callbacks can recursively call the same extension: the nested call borrows
 another instance while the outer instance retains its continuation. The cache
 retains at most eight idle instances; active and nested calls allocate additional
@@ -213,26 +226,52 @@ fork-join worker pool and GPU execution are not enabled by this binding.
 ## Proofs and trust boundary
 
 The build checks the library and application proof files before emitting native
-code. The library proves properties of argument lookup and exact-arity parsers;
-the typed adapters use those parsers. Example laws specify the pure functions.
+code. The library laws cover the pure argument helpers: `arity`/`argument`
+lookup, and `singleton`/`pair`, which succeed exactly when the list has one/two
+elements (`*_exact_arity`, `*_complete`). The typed adapters use those parsers,
+but the IO wrappers around them and the keyword check are not proved. Most
+library and example laws restate a definition; they guard against regressions
+rather than establish nontrivial properties.
 
-The thread-state proof models the actual intended detach/evaluate/restore
-protocol: Python effects require an attached state, and both GIL policies restore
-that state on successful and failed evaluations. The context-lease model also
-proves that a leased context cannot be acquired again and that updating or
-discarding one context leaves every other context's state unchanged. These laws
-assume distinct allocation identities and atomic acquisition/return. **This is a protocol proof,
-not an end-to-end proof of the C implementation or CPython.** Runtime checks at
-the C boundary verify an attached thread state, and GIL ownership on conventional
-builds. Tests cover both policies, callbacks, mutation, concurrency, and
-free-threaded imports. A temporary instrumented extension requires two native
-evaluations to enter together with distinct heaps and OS threads; the old
-serialized implementation fails this test. Proving that the C implementation refines the model remains
-an open obligation; the generated compiler/runtime and C bridge are trusted code.
+The thread-state proof is a specification of the intended detach/evaluate/restore
+protocol: a Python effect is accepted only in the attached state, and every
+modeled call sequence for either GIL policy ends attached. The model permits
+native work in any state and gives failure no separate control flow, so "no
+Python API during native work" and "restore after a native failure" are
+stipulations of the model, not consequences of it. The separate context-lease
+model proves that a lease is granted only from an idle slot, that a leased slot
+cannot be acquired again, that only a successful return with cache space makes
+a slot reusable, and that updating one slot leaves the others unchanged. The
+lease and thread-state models are not connected, and slot isolation is a
+list-update lemma: in C it comes from separate allocations. These laws assume
+distinct allocation identities and atomic acquisition/return; the model indexes
+contexts by slot while the C cache is a mutex-protected linked list, and that
+correspondence is trusted. **This is a protocol proof, not an end-to-end proof
+of the C implementation or CPython.** A temporary instrumented extension
+requires two native evaluations to enter together with distinct heaps and OS
+threads; the old serialized implementation fails this test. Proving that the C
+implementation refines the model remains an open obligation; the generated
+compiler/runtime and C bridge are trusted code.
 
 Bend reports foreign-code dependencies for exported wrappers. Pure proofs do not
 establish correctness of that foreign code, its allocator, or Python object
 reference counting.
+
+### Core invariants
+
+| Invariant | How it is established |
+|---|---|
+| A handle refers to a strong reference in the current invocation's arena; all arena references are released when the invocation ends | C: `bp_get` bounds-checks each handle against the current arena; `bp_run` decrefs the arena after returning the lease. Tested (`test_call_arena_releases_owned_references`). A manually built in-range handle aliases another object of the same call rather than failing; not prevented. |
+| Handles do not outlive their invocation | Trusted: exports are captureless and Bend has no mutable global state, so a handle cannot reach a later call except by forging one. |
+| Objects pass through unchanged (identity, precision, aliases, cycles) | C stores the original `PyObject*` and returns it with a new reference. Tested. |
+| Python API runs only while attached, and never inside native evaluation | C: `bp_assert_attached` at every boundary (fatal error otherwise; also checks the GIL on conventional builds and that no evaluation is active on this thread). Modeled by `accepted_effect_attached`, `release_before_restore_rejected`; absence of Python calls inside native work is trusted. |
+| Every call returns to Python attached | Modeled by `native_returns_attached`, `acquire_returns_attached`, `return_restores_attachment`; C's `setjmp` placement for native failures is trusted. Free-threaded builds always detach; the model covers that as the `True{}` policy. |
+| One invocation per runtime instance | Modeled by `acquisition_requires_available`, `reserved_acquisition_rejected`; C removes an instance from the idle list under the pool mutex (trusted), and evaluation state is thread-local. Tested by the instrumented concurrency test. |
+| A native failure affects only its instance | Modeled by `failure_isolated`, `failed_context_unavailable`. C marks the instance poisoned and unmaps it. Tested (`test_native_failure_discards_only_the_failed_context`). Ordinary Python exceptions only drop the continuation and keep the instance; its reuse is tested, not proved. |
+| Poisoned or large instances are never reused | Modeled by `failed_context_discarded`, `reusable_requires_success`, `reusable_requires_cache_space`. The model's `cache_space` stands for C's "heap within 32 MiB and fewer than eight cached" (`bp_runtime_reusable`); that mapping is trusted. Tested for heap release. |
+| Exported callbacks are captureless | C rejects a non-captureless closure at `export`, failing import. Typed helpers ensure it with templates. Not proved; the rejection path is untested. |
+| Typed adapters reject wrong arity and keywords with `TypeError` | Pure arity parsing proved (`singleton_exact_arity`, `pair_exact_arity`, `singleton_complete`, `pair_complete`). The `require_*` IO wrappers and the C keyword check are tested, not proved. |
+| U32/F32/String conversion semantics | C only; tested. U32 rejects `bool`/non-`int` and values outside `[0, 2**32 - 1]`. F32 requires a `float` and narrows with IEEE round-to-nearest. Strings copy codepoints; codepoints above U+10FFFF are rejected on return. |
 
 ## Manylinux wheels: Docker and GitHub Actions
 
@@ -248,10 +287,11 @@ docker run --rm --user "$(id -u):$(id -g)" \
 
 To select one ABI, add `-e PYTHON_TAGS=cp314-cp314t`. The pinned
 `manylinux_2_28_x86_64` image installs Clang and the checksum-pinned Bend compiler.
-For each ABI, the script builds from a clean source distribution, repairs the
-wheel with `auditwheel`, installs it into a separate environment, and runs tests
-against the installed extension, plus temporary-extension build and concurrency
-tests. The checkout is mounted read-only. Use the
+The script builds the pure `bend-python` SDK wheel once. For each ABI, it
+installs that wheel into a fresh environment, builds the example project from a
+clean source distribution against it, repairs the example wheel with
+`auditwheel`, installs it, and runs tests against the installed extension, plus
+temporary-extension build and concurrency tests. The checkout is mounted read-only. Use the
 same helper in another project with compatible `tests/`, or
 adapt that test invocation.
 
@@ -274,9 +314,13 @@ macOS, Windows, and other architectures are not validated.
 - The shim preserves Python's signal handlers. Arbitrary native faults or stack
   exhaustion can still terminate the process; those are not caught exceptions.
 - Each active or cached instance reserves about 8 GiB virtual heap and 2 GiB
-  virtual stack, mostly untouched rather than resident RAM. Up to eight idle
-  instances remain cached per extension until process exit. Failed instances and
-  instances exceeding that idle-cache limit are unmapped when returned.
+  virtual stack. Most of it is never touched, but concurrent or nested calls
+  each reserve their own, so an address-space limit (`ulimit -v`) or strict
+  overcommit (`vm.overcommit_memory=2`) can make calls fail with `RuntimeError`.
+- Up to eight idle instances remain cached per extension until process exit.
+  Only instances whose heap stayed within 32 MiB are cached; failed instances,
+  instances that grew larger, and returns beyond the cache limit are unmapped,
+  so a large call's resident memory is released when it finishes.
 
 [`AGENTS.md`](AGENTS.md) contains short continuation notes and pinned upstream
 references. Run local checks with `.venv/bin/python -m unittest discover -s tests`.

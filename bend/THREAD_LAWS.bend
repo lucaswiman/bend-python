@@ -75,3 +75,25 @@ law failed_context_unavailable:
 
 law successful_context_reusable:
   {Thread.completion(Thread.Succeeded{}, True{}) == Thread.Idle{} : Thread.Context}
+
+# Converses: a lease is granted only from an Idle slot, and only a successful
+# completion with cache space returns a context to Idle. C folds "not poisoned,
+# heap within 32 MiB, fewer than eight cached" into these inputs (trusted).
+law acquisition_requires_available:
+  for pool: List<&2, Thread.Context>
+  for slot: Nat
+  for next: List<&2, Thread.Context>
+  for acquired: {Thread.acquire(pool, slot) == Some{next} : Maybe<List<&2, Thread.Context>>}
+  {Thread.available(pool, slot) == True{} : Bool}
+
+law reusable_requires_success:
+  for outcome: Thread.Outcome
+  for cache_space: Bool
+  for reusable: {Thread.completion(outcome, cache_space) == Thread.Idle{} : Thread.Context}
+  {outcome == Thread.Succeeded{} : Thread.Outcome}
+
+law reusable_requires_cache_space:
+  for outcome: Thread.Outcome
+  for cache_space: Bool
+  for reusable: {Thread.completion(outcome, cache_space) == Thread.Idle{} : Thread.Context}
+  {cache_space == True{} : Bool}
