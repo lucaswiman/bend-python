@@ -58,8 +58,7 @@ relying on it.
 You need Clang and the `bend-python` SDK in your build environment. The first
 build downloads the pinned Bend compiler (checksum-verified, cached under
 `~/.cache/bend-python`); set `BEND` to use your own, or `BEND_PYTHON_DOWNLOAD=0`
-to forbid the download. The SDK is not on PyPI yet: build its wheel from this
-repository with `uv build`.
+to forbid the download.
 
 `fast.bend` imports `./bend/python.bend`. If that directory is missing, the build
 copies the SDK's Bend library there; `python -m bend_python vendor bend` does
@@ -86,8 +85,7 @@ requires = ["setuptools>=80", "bend-python==0.1.0"]
 build-backend = "setuptools.build_meta"
 ```
 
-Then `python -m build` or `pip install .` (until the SDK is on PyPI, point them
-at its wheel with `PIP_FIND_LINKS=<dir>`). The build proves the library's laws
+Then `python -m build` or `pip install .`. The build proves the library's laws
 and yours, generates C, and compiles it; a false law ends the build with
 `error: Bend proof check failed: PROOF.bend` after Bend's diagnostic. Dotted
 names such as `mypackage._native` work. Ship your `.bend` files in the sdist

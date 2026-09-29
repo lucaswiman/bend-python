@@ -7,6 +7,8 @@ when its version has a section below.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-09-29
+
 ### Added
 
 - `BendExtension` and `BendBuildExt`: setuptools integration that proves a
@@ -31,4 +33,5 @@ when its version has a section below.
   for the typed adapters' argument checks.
 - Linux x86_64 support for CPython 3.10–3.14 and 3.14t.
 
-[Unreleased]: https://github.com/lucaswiman/bend-python/commits/main
+[Unreleased]: https://github.com/lucaswiman/bend-python/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/lucaswiman/bend-python/releases/tag/v0.1.0
