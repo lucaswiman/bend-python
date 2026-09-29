@@ -1,0 +1,11 @@
+.git
+.tools
+.venv
+build
+dist
+wheelhouse
+**/*.so
+**/__pycache__
+**/*.egg-info
+examples/bend
+examples/build

@@ -1,0 +1,9 @@
+.tools/
+.venv/
+build/
+dist/
+wheelhouse/
+*.egg-info/
+*.so
+__pycache__/
+/examples/bend/

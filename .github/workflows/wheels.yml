@@ -1,0 +1,67 @@
+name: Linux wheels
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch or PR supersedes older runs.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
+        with:
+          enable-cache: true
+      # Proofs are checked by every wheel build below, which has Bend installed.
+      - run: SKIP=bend-proofs uvx prek@0.5.3 run --all-files --show-diff-on-failure
+
+  sdk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
+        with:
+          enable-cache: true
+      - run: uv build
+      # Validates metadata and that the README renders on PyPI.
+      - run: uvx twine check --strict dist/*
+      - name: The SDK wheel must stay pure Python
+        run: ls dist/bend_python-*-py3-none-any.whl
+
+  manylinux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        python: [cp310-cp310, cp311-cp311, cp312-cp312, cp313-cp313, cp314-cp314, cp314-cp314t]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - name: Build compiler image
+        run: docker build --file docker/Dockerfile --tag bend-python-manylinux .
+      - name: Build SDK and example wheels, then test the installed example
+        run: |
+          mkdir -p wheelhouse
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            --env PYTHON_TAGS=${{ matrix.python }} \
+            --volume "$PWD:/io:ro" \
+            --volume "$PWD/wheelhouse:/wheelhouse" \
+            bend-python-manylinux
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: wheels-${{ matrix.python }}-manylinux_x86_64
+          path: wheelhouse/*.whl
+          if-no-files-found: error
