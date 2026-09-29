@@ -89,6 +89,7 @@ class BuildTests(unittest.TestCase):
         native_rendezvous=False,
         break_vendored_library=False,
         auto_vendor=False,
+        deterministic_handles=False,
     ):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -136,6 +137,13 @@ class BuildTests(unittest.TestCase):
                     "pass  # rely on the build",
                 )
             )
+        if deterministic_handles:
+            # Fix only this fixture's entropy; key derivation and validation stay real.
+            shim = directory / "bend/python.c"
+            source = shim.read_text()
+            entropy = "getrandom(&bp_secret, sizeof(bp_secret), 0)"
+            self.assertEqual(source.count(entropy), 1)
+            shim.write_text(source.replace(entropy, "(bp_secret = 0, sizeof(bp_secret))"))
         if native_rendezvous:
             shim = directory / "bend/python.c"
             source = shim.read_text()
@@ -284,7 +292,10 @@ for value in (0, 1, 12, 65535):
         )
 
     def test_forged_handles_are_rejected(self):
-        directory, result = self.build("""
+        # With this fixed seed, both forgeries decode outside the arena. Random
+        # keys can decode a forgery to a valid index, so rejection is not guaranteed.
+        directory, result = self.build(
+            """
 def forge_constant(request: Python.Call) -> IO(Python.Object):
   IO.pure(Python.Object, Python.PyObject{0})
 
@@ -307,7 +318,9 @@ def main() -> IO(Unit):
     Python.export("forge_constant", forge_constant, False{})
     Python.export("forge_next", forge_next, False{})
     Python.export("copy", copy, False{})
-""")
+""",
+            deterministic_handles=True,
+        )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.run_python(
             directory,
