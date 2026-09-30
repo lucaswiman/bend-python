@@ -14,9 +14,9 @@ and a test. Then:
     PYTHONPATH=src .venv/bin/python -m pytest
 """
 
+from pathlib import Path
 import re
 import sys
-from pathlib import Path
 
 FILES = {
     "pyproject.toml": """\

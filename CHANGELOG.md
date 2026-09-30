@@ -7,6 +7,15 @@ when its version has a section below.
 
 ## [Unreleased]
 
+### Added
+
+- An agent skill, `skills/bend-python`, installable with
+  `gh skill install lucaswiman/bend-python bend-python`: setup, the build, the
+  Python interface and its guarantees, Bend 2's checker rules with fixes, and
+  writing and proving laws, including agreeing on law statements with the user.
+  It includes a project scaffold, a first-error filter and a definition
+  reorderer.
+
 ## [0.1.0] - 2026-09-29
 
 ### Added

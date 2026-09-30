@@ -105,7 +105,8 @@ lists each with its fix. Most importantly:
   Branch on a computed value by passing it to a helper def.
 - A def may call only defs **above** it (except `@unsafe`/`name?` defs).
   `python3 $SKILL/scripts/reorder_defs.py file.bend` reorders defs to satisfy this.
-- Variables are affine: mark reused ones `+x` (Data types only).
+- Variables are affine: mark reused ones `+x` (Data types only). A matched
+  `+n` makes its pattern binders (`1n+p`, `h <> t`) reusable too.
 - Recursion must be structural (left-to-right argument order); otherwise use
   fuel or a `?` (unsafe) def, which the proofs cannot cover.
 
@@ -114,7 +115,8 @@ lists each with its fix. Most importantly:
 Write PROOF.bend (`def Laws.<name>(args): ...`), check with `$BEND PROOF.bend`,
 then **break the code each law covers and confirm the check fails**, restoring
 it afterwards. A law that survives mutation is vacuous or misstated. Read
-PROOFS.md first: the rewrite direction of `%e : P` trips everyone.
+PROOFS.md first: the rewrite direction of `%e : P` trips everyone (the term to
+eliminate must be on the **right** of `e`'s equation; flip with `Equal.sym`).
 
 ### 5. Test what is not proved
 
@@ -152,6 +154,8 @@ limits: PYTHON.md.
 | `expected : Data, observed : Type` | Use `List<&2, T>` / `+List<T>`; pairs `A & B` are Type, so define a Data record type |
 | `expected a term, observed ']'` | In multi-scrutinee cases write `Nil{}` / `Con{h, t}`, not `[]` / `[x]`, after the first pattern |
 | `expected a defined name, observed Rat` | Prefix imported names and constructors with the alias: `Big.Rat`, `E.Num{...}` |
+| `expected a defined name, observed src/pkg/mod.f` | Inside `mod.bend` name defs `f`, not `Mod.f`; the alias is the importer's |
 | `expected @_:A -> ... observed @+a:A -> ...` | Wrap a template argument: `~(a => b => f(a, b))` |
 | Goal mismatch after `%e : P` | The goal must be `P` with `e`'s **right** side at `_`; flip with `Equal.sym` |
+| Goal stuck on a value after `case _:` | Wildcards do not refine; split every constructor |
 | `N TODOs found` | Unproved laws or `?name` holes remain |

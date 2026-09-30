@@ -47,7 +47,9 @@ def main() -> U32:
 - `x = v` let, `+x = v` reusable let, `(a, b) = p` destructuring let (only of a
   parameter or bound variable, not a computed value, see §3).
 - `do IO<T>:` blocks: `x : A <- m` binds, `m` runs a Unit step, `return v`.
-  Every bind is annotated.
+  Every bind is annotated. A destructuring let (`(a, b) = pair`) is not
+  allowed inside a `do` block: bind the pair, then pass it to a helper def that
+  destructures it and opens its own block (as `Python.binary` callers do).
 - Comments start with `#`.
 
 ## 2. Quantities, kinds and affinity
@@ -62,10 +64,18 @@ def main() -> U32:
 - Pairs `A & B` are `Kind(&1)` (Type), even of Data components, so
   `Maybe<&2, A & B>` fails. Define a small Data record instead:
   `type Parsed is Data: Parsed{value: Expr, rest: List<&2, U32>}`.
-- Library functions often return `List<U32>` (affine). Copy element by element
-  into `List<&2, U32>` when you need reuse (and back before passing it on).
+- Library functions often return `List<U32>` (affine). Either copy element by
+  element into `List<&2, U32>` when you need reuse (and back before passing it
+  on), or write list functions quantity-polymorphic like Base does, so one def
+  serves both: `def count(a, xs: List<a, U32>, v: U32) -> U32`, called as
+  `count(&1, data, v)` or `count(&2, xs, v)`. In proofs, specialize to `&2`:
+  a value of kind `Kind(a)` for an unknown `a` cannot be reused.
 - Reuse in proofs counts too: a hypothesis or argument used twice needs `+h` /
   `+x`, including law binders (`for +x: T`).
+- Pattern binders inherit reusability from the matched value: after
+  `def f(+n: Nat)`, `case 1n+p:` gives a reusable `p` (there is no `+1n+p`
+  syntax). Likewise matching a `+xs` list hands out reusable `h` and `t`; on a
+  plain value write `C{+field}` for the fields you reuse.
 
 ## 3. Matching rules
 
@@ -167,6 +177,11 @@ import ./arith.bend as A
   `A.square`, `A.Rat`, `E.Num{r}`, `Python.PyCall{args, kwargs}`.
 - Module paths are plain names; directories are fine (`./src/pkg/expr.bend`),
   dots in file names are not (`a.b.bend` is refused).
+- The alias belongs to the importer. Inside `logic.bend` write
+  `def next(...)`, not `def Logic.next(...)`; callers write `Logic.next`.
+  Defining `Logic.next` inside the module makes callers need
+  `Logic.Logic.next`, and the error (`expected : a defined name / observed :
+  src/pkg/logic.max_go`) points at the caller or law, not at the def.
 - Dots inside def names are just characters (`Mag.add_c`), so a module whose
   defs start with `Mag.` is used as `Big.Mag.add_c`.
 - Two files cannot import each other; move shared code down.
@@ -217,7 +232,10 @@ import ./arith.bend as A
 | `expected : -G  observed : G` | Erased parameter used in a returned type | Drop the `-` |
 | `expected a term, observed ']'` | `[]` after the first pattern | `Nil{}`, `Con{x, Nil{}}` |
 | `expected 2 patterns (one per scrutinee)` | Same parsing issue | Same fix |
+| `expected: a pattern (a binder or a constructor)  observed: IO.bind(...)` | Destructuring let inside a `do` block | Destructure in a helper def |
 | `expected a fresh constructor name (duplicate declaration: X)` | Constructor name reused | Rename |
+| `expected : a defined name  observed : src/pkg/logic.f` | Defs inside `logic.bend` were named `Logic.f` | Name them `f`; the alias is the importer's |
+| `expected : a defined name  observed : _` | `_` passed as an ordinary argument (e.g. an erased type) | Spell the argument out; `_` only works inside a `%e : P` motive |
 | `expected a fresh name (Laws is an import's alias)` | Helper lemma named `Laws.foo` | Only laws use the `Laws.` prefix; name helpers freely |
 | `expected a quantified datatype after +` | `+U32` inside a type argument | `List<&2, U32>` |
 | `expected : List<&2, U32> observed : List<U32>` | Mixed quantities | Copy the list, or align the signature |

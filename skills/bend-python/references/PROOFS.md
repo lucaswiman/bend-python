@@ -55,9 +55,16 @@ law name:
 - A proof is a def whose return type is the claim. `{==}` proves an equality
   when both sides compute to the same term.
 - `match x:` in a proof refines the goal **and the hypotheses** mentioning `x`.
+  Only constructor patterns refine: in `case _:` the value stays unknown, so a
+  function that matches on it stays stuck. Spell out every constructor
+  (`case LT{}:` and `case EQ{}:` separately) when the goal depends on it.
 - A recursive call on a smaller argument is the induction hypothesis.
 - **Rewriting**: `%e : P` with `e : {a == b : T}` requires the current goal to
   be `P` with **`b`** at every `_`, and continues with `P` with `a` there.
+  **Rule of thumb: the term you want to get rid of must be on the right of
+  `e`.** A hypothesis or lemma usually has it on the left (`{f(x) == 0}`), so
+  flip it first with `Equal.sym`, or state your own lemmas the other way round
+  (`{0 == f(x)}`).
   So to replace a complicated subterm `c` by a simple `s`, you need
   `e : {s == c}`. State helper lemmas as `{simple == complicated}`, or flip
   with `Equal.sym(T, a, b, e)`:
@@ -73,8 +80,14 @@ law name:
 - `?name` prints the current goal and context. Use it constantly.
 - Helper lemmas are ordinary typed defs (not in the `Laws.` namespace):
   `def u32_eq(x: U32) -> {EQ{} == U32.cmp(x, x) : Cmp}: ...`
-- Base provides `Equal.sym`, `Equal.trans`, `Equal.cong(A, B, f, a, b, e)` and
-  `U32.add_comm`. Everything else about U32 you prove over `Word(n)`.
+- Look for lemmas Base already proves before writing your own:
+  `bend base | grep '^law'` lists them (`Equal.sym`, `Equal.trans`,
+  `Equal.cong(A, B, f, a, b, e)`, `Nat.ge_refl`, `Nat.max_ge_l`,
+  `Nat.max_ge_r`, `U32.add_comm`, `Word.add_comm`, ...). Nat has more proved
+  facts than U32; for counters and bounds that need proofs, Nat is often easier.
+  Anything else about U32 you prove over `Word(n)`.
+- `_` is only a motive placeholder. Erased arguments in ordinary calls must be
+  written out: `false_ne_true({a == b : T}, h)`, not `false_ne_true(_, h)`.
 
 ## 4. Recipes
 
@@ -110,6 +123,16 @@ def and_l(a: Bool, b: Bool, h: {Bool.and(a, b) == True{} : Bool}) -> {a == True{
 (`Bool.and` matches its first argument, so `and_r` returns `h` directly in the
 `True` case.) Turn `{Bool.not(b) == True{}}` into `{False{} == b}` by matching
 `b`, ready to rewrite `b`.
+
+**Chaining equalities instead of rewriting.** `Equal.trans(T, a, b, c, ab,
+bc)` and `Equal.cong(A, B, f, a, b, e)` (`bend base Equal` prints them) take
+their endpoints explicitly, and a proof whose type is only *convertible* to
+`{a == b}` is accepted. Chains of lemmas are often easier to get right this way
+than with a series of `%e : P` motives:
+
+```bend
+Equal.trans(U32, lhs, middle, rhs, lemma_one(xs), lemma_two(xs))
+```
 
 **Case analysis on a computed value.** You cannot `match f(x)`. Generalize:
 take `c: Cmp` and `e: {f(x) == c : Cmp}` as parameters, match `c`, and pass

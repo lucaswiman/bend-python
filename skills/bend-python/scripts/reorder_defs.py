@@ -9,9 +9,9 @@ which Bend rejects anyway.
 Usage: python3 reorder_defs.py FILE.bend [--check]
 """
 
+from pathlib import Path
 import re
 import sys
-from pathlib import Path
 
 HEAD = re.compile(r"(?:@unsafe\s+)?def ([\w.]+)(\??)\(")
 CALL = re.compile(r"(?<![\w.])([A-Za-z_][\w]*(?:\.[\w]+)*)(?=\()")
@@ -27,7 +27,7 @@ def blocks(text):
         elif top:
             if current:
                 result.append(current)
-            current, pending = pending + [line], []
+            current, pending = [*pending, line], []
         elif pending:
             pending.append(line)
         else:
