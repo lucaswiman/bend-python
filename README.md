@@ -93,6 +93,19 @@ names such as `mypackage._native` work. Ship your `.bend` files in the sdist
 [`examples/`](https://github.com/lucaswiman/bend-python/tree/main/examples) is a
 complete project built this way.
 
+### Optional: an agent skill
+
+[`skills/bend-python`](https://github.com/lucaswiman/bend-python/tree/main/skills/bend-python)
+teaches coding agents (Claude Code, Codex, Copilot, Cursor and others) to work
+with bend-python and Bend 2: setup, the build, the Python interface, Bend's
+checker rules, and writing laws and proofs, including agreeing on laws with
+you before proving them. It needs GitHub CLI 2.90 or later:
+
+```sh
+gh skill install lucaswiman/bend-python bend-python                  # choose agent and scope
+gh skill install lucaswiman/bend-python bend-python --agent codex --scope user
+```
+
 ## The Python interface
 
 An export receives a `Python.Call` (positional arguments and a kwargs dict) and
