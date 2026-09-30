@@ -126,8 +126,14 @@ Python sees each export as a module-level function of the extension
   (`Python.getattr(Python.builtins("int"), "from_bytes")`, then `invoke`).
 - 64-bit floats: Bend has only F32. Walk the structure in Bend and call
   `operator.add`, `cmath.sin` and so on through `Python.invoke`.
-- Errors: return `None` (via `Python.none()`) and raise in the Python wrapper,
-  or call `Python.type_error`.
+- Errors: keep unsupported input, undefined values, failed certificates, and
+  successful results distinct in Bend, then map them to useful Python errors.
+  A thin wrapper can decode separate sentinels (for example `False` versus
+  `None`) using `is`; do not conflate either with a successful zero or empty
+  encoding. `Python.type_error` handles argument errors directly.
+- After changing Bend code, rebuild the extension before Python tests or
+  benchmarks. Start a fresh Python process: an already imported native module
+  still uses its loaded code. A proof check alone does not update the binary.
 
 ## 4. Threads and the GIL
 

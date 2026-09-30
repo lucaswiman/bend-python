@@ -1,6 +1,6 @@
 ---
 name: bend-python
-description: Build CPython extensions in Bend 2 with the bend-python SDK, and state and prove laws about them with LAWS.bend/PROOF.bend. Use when writing or debugging .bend code, a BendExtension setup.py, Bend laws and proofs, or when the user mentions bend-python, Bend 2, bendlang, or proving properties of a Python extension.
+description: Build and debug Bend 2 CPython extensions with the bend-python SDK, including .bend code, BendExtension builds, and LAWS.bend/PROOF.bend contracts. Use for Bend 2 extension work and its laws, proofs, and performance; not Bend 1/HVM or unrelated Python extensions.
 license: MIT
 compatibility: Linux x86_64, CPython 3.10-3.14 (and 3.14t), Clang 14+. First build needs PyPI and GitHub release downloads, or BEND set to a bend 2.0.28 executable.
 metadata:
@@ -12,8 +12,9 @@ metadata:
 
 bend-python compiles a [Bend 2](https://github.com/bendlang/bend) program into
 a CPython extension module. Bend 2 (pinned: **2.0.28**) is a pure, affine,
-dependently typed language with *laws*: claims the build proves before it
-compiles. A false law is a build error, not a failing test.
+dependently typed language with *laws*. Every law imported by a proof gate
+needs a checked proof before the extension compiles; passing tests do not fill
+unproved laws.
 
 This is **Bend 2**, a different language from Bend 1 / HVM (`bend run`,
 `fold`, `bend` blocks, `.hvm`). Never use Bend 1 syntax or documentation.
@@ -32,7 +33,7 @@ Below, `$SKILL` is this skill's directory (the one containing this file) and
 commands run in the project directory.
 
 ```sh
-uv venv .venv && uv pip install --python .venv/bin/python bend-python==0.1.0 setuptools pytest
+uv venv -p 3.14 .venv && uv pip install --python .venv/bin/python bend-python==0.1.0 setuptools pytest
 # or: python3 -m venv .venv && .venv/bin/pip install bend-python==0.1.0 setuptools pytest
 export BEND=$(.venv/bin/python $SKILL/scripts/find_bend.py)   # pinned compiler (downloads once)
 $BEND guide                                                     # read before writing Bend
@@ -65,35 +66,27 @@ arguments, picks classes and raises exceptions; Bend computes. For structured
 data, pass `bytes` in an encoding you define (see PYTHON.md) rather than
 walking Python objects with many FFI calls.
 
-### 2. Agree on laws with the user before proving them
+### 2. State the contract before implementing and proving it
 
-Laws are the specification. The user owns their statements; you own the
-proofs. Before writing or changing any law in LAWS.bend:
+Laws specify the behavior the user requested. Use existing authorization to
+formalize that behavior; do not ask again for routine binder quantities or
+proof helpers. If a substantive contract choice is unresolved, explain the
+guarantees, hypotheses and proof limits, show the literal law text, and ask
+which contract to adopt while continuing independent work. Do not silently
+weaken an agreed property to make its proof easy. Show a counterexample when a
+desired property is false, or identify missing machinery such as field laws.
 
-1. **Explain the context in chat**: what the code does, what each law
-   guarantees and what it does not, which hypotheses it needs (and why they are
-   necessary), how hard the proof will be and what code changes it may force.
-   Say plainly when a desirable property is false for the implementation (show
-   a counterexample; see step 5) or would need machinery that does not exist
-   yet (for example, verified bignum arithmetic).
-2. **Show the literal law text** in a ```bend block, exactly as it would go in
-   LAWS.bend, one law per proposal item:
+For new features, draft laws in a separate file such as `PENDING.bend` before
+implementation. Once the referenced definitions exist, check that the claims
+type-check with the expected TODOs. Prove them in `PROOF.bend`, then promote
+them to `LAWS.bend` and remove the pending copies. Keep unrelated pending
+claims intact. Only proved laws belong in the configured build gate.
 
-   ```bend
-   # Reversing twice gives the list back.
-   law reverse_reverse:
-     for xs: List<U32>
-     {List.reverse(&1, U32, List.reverse(&1, U32, xs)) == xs : List<U32>}
-   ```
-3. **Ask** which to adopt, strengthen, weaken or drop, and wait for the answer.
-   Offer a ranked recommendation, cheapest and most valuable first.
-4. Changing an approved statement later (even only a quantity such as `for x`
-   to `for +x`) goes back to the user with the reason.
-
-Unproved but approved claims can live in a separate file (for example
-`PENDING.bend`, imported code only, `law` statements without defs). It
-type-checks against the code without gating the build: `bend PENDING.bend`
-reports exactly "N TODOs found".
+Specify observable properties independently of the runtime validator. A claim
+that a result passes `valid(...)` is too weak if changing `valid` to always
+return `True` also changes the law's meaning. State the reconstruction,
+normalization, residual, or other promised property explicitly. See PROOFS.md
+for certificates and the difference between sound success and total success.
 
 ### 3. Implement in Bend
 
@@ -107,14 +100,20 @@ lists each with its fix. Most importantly:
   `python3 $SKILL/scripts/reorder_defs.py file.bend` reorders defs to satisfy this.
 - Variables are affine: mark reused ones `+x` (Data types only). A matched
   `+n` makes its pattern binders (`1n+p`, `h <> t`) reusable too.
-- Recursion must be structural (left-to-right argument order); otherwise use
-  fuel or a `?` (unsafe) def, which the proofs cannot cover.
+- Recursion must be structural (left-to-right argument order). For descent
+  hidden by transformations or callbacks, put input-derived `Nat` fuel first.
+  Unsafe defs remain proof dependencies whose termination is unchecked.
+- Evaluation is strict: pass an expensive fallback as `Unit -> Result`, not
+  as an already computed argument. Check cheap syntax before dense conversion;
+  collect factors or terms before canonicalizing once. See LANGUAGE.md.
 
 ### 4. Prove, then mutation-check
 
 Write PROOF.bend (`def Laws.<name>(args): ...`), check with `$BEND PROOF.bend`,
-then **break the code each law covers and confirm the check fails**, restoring
-it afterwards. A law that survives mutation is vacuous or misstated. Read
+then **mutate the behavior each law covers and confirm the proof check fails**
+in an isolated copy. Check that the mutated runtime code still type-checks;
+syntax or affinity failures do not validate the law. A surviving mutation may
+preserve the contract or reveal a weak claim; inspect which. Read
 PROOFS.md first: the rewrite direction of `%e : P` trips everyone (the term to
 eliminate must be on the **right** of `e`'s equation; flip with `Equal.sym`).
 
@@ -124,7 +123,9 @@ Test the extension from Python against a reference implementation, ideally
 with Hypothesis. Before proposing a law about a composite operation, search for
 counterexamples with the built extension (Hypothesis `find`): exact equalities
 on simplified or normalized output are often false even when the mathematics
-is true.
+is true. Include unsupported and undefined inputs, byte/degree carry boundaries,
+and representative large expressions. Compare algebraic identities with an
+independent semantic reference as well as checking structural contracts.
 
 ### 6. Report honestly
 
@@ -142,20 +143,3 @@ handles are sealed per call (forged handles are detected probabilistically),
 conversions are strict, each call runs in its own runtime instance on one core,
 and a native Bend failure raises `RuntimeError` for that call only. Details and
 limits: PYTHON.md.
-
-## Common checker errors
-
-| Message (abridged) | Fix |
-|---|---|
-| `a match cannot scrutinize a computed value` | Pass the value to a helper def and match its parameter |
-| `a match on a parameter or field (... consumed binder ...)` | Match parameters in declaration order, in one `match a b:`; no `let` before a match on a parameter |
-| `expected a filled definition ... observed <name>` | The callee is below the caller: move it up (or run `reorder_defs.py`) |
-| `x (consumed more than once)` | Declare `+x` (param, pattern field `C{+x}`, or law binder `for +x`) |
-| `expected : Data, observed : Type` | Use `List<&2, T>` / `+List<T>`; pairs `A & B` are Type, so define a Data record type |
-| `expected a term, observed ']'` | In multi-scrutinee cases write `Nil{}` / `Con{h, t}`, not `[]` / `[x]`, after the first pattern |
-| `expected a defined name, observed Rat` | Prefix imported names and constructors with the alias: `Big.Rat`, `E.Num{...}` |
-| `expected a defined name, observed src/pkg/mod.f` | Inside `mod.bend` name defs `f`, not `Mod.f`; the alias is the importer's |
-| `expected @_:A -> ... observed @+a:A -> ...` | Wrap a template argument: `~(a => b => f(a, b))` |
-| Goal mismatch after `%e : P` | The goal must be `P` with `e`'s **right** side at `_`; flip with `Equal.sym` |
-| Goal stuck on a value after `case _:` | Wildcards do not refine; split every constructor |
-| `N TODOs found` | Unproved laws or `?name` holes remain |

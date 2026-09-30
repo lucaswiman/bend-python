@@ -108,6 +108,9 @@ def main() -> U32:
    reduce, which matters for proofs) until every column it inspects is a
    constructor, even if an earlier row would already decide. To make
    `f(x, y)` reduce when only `x` is known, match `x` alone and delegate.
+7. Pairs are opened with a destructuring let, not a pair `case` pattern. If
+   another parameter decides a branch, match it first and destructure the pair
+   inside that branch; destructuring before the match consumes the binders.
 
 ## 4. Definition order, recursion and termination
 
@@ -115,7 +118,9 @@ def main() -> U32:
   other in any order. `python3 $SKILL/scripts/reorder_defs.py file.bend` topologically
   reorders a file's defs (unsafe defs are left unconstrained).
 - **Mutual recursion is not allowed.** Merge two functions into one with a
-  selector argument placed *after* the shrinking argument, or use unsafe defs.
+  selector argument placed *after* the shrinking argument. An earlier helper
+  can instead take a continuation supplied by the recursive caller; it need
+  not refer to a later def by name.
 - Recursion must be **structural**: the checker reads recursive-call arguments
   left to right; each must be passed unchanged until one is a smaller part of
   its parameter (obtained by matching). Put the shrinking parameter first.
@@ -124,10 +129,13 @@ def main() -> U32:
 - `def f?(x: A) -> B:` (or `@unsafe def`) skips the termination check and may
   call defs below it, so unsafe defs can be mutually recursive. `bend` then
   lists every def that "relies on unsafe or foreign code". Proofs can still
-  unfold unsafe defs, but cannot do induction over their recursion.
+  unfold unsafe defs; their termination is not established by the checker.
 - Recursion bounded by something non-structural takes a `Nat` fuel argument
-  first: `go(fuel: Nat, ...)` recursing on `pred`. Pick fuel from the input
-  (its length, or twice the digit count).
+  first: `go(fuel: Nat, ...)` recursing on the pattern-bound predecessor. Pick
+  sufficient fuel from the input (length or node count). This also works when
+  a partition or conversion hides structural descent from the checker. Give
+  exhaustion its own error or unsupported outcome if it is not a valid result;
+  fuel establishes termination of the dispatcher, not completeness.
 
 ## 5. Patterns for branching and recursion
 
@@ -158,6 +166,22 @@ is exponential for merges. Use these instead:
   ```
 - **Precompute the decision as a parameter**: pass `cmp(x, head(rest))` as an
   argument of the recursive call, and match on it (a parameter) next time.
+- **Delay an optional branch** with an affine closure:
+
+  ```bend
+  def choose(flag: Bool, yes: Unit -> Nat, no: Unit -> Nat) -> Nat:
+    match flag:
+      case True{}:
+        yes(Unit{})
+      case False{}:
+        no(Unit{})
+
+  def compute(+n: Nat, fast: Bool) -> Nat:
+    choose(fast, _ => n, _ => Nat.mul(n, n))
+  ```
+
+  Only the chosen closure body runs. Keep the expensive expression inside
+  the closure; computing it in a let before this call is still eager.
 - **Mode flag** to fold a list and a tree walk into one structural def:
   `go(e: Expr, top: Bool, tail)` where `top = False` means "encode only the
   children of this Add". The expression stays first, so recursion on
@@ -201,7 +225,11 @@ import ./arith.bend as A
   (`List<U32>` of values below 256) and `Python.to_bytes`/`from_bytes`.
 - Arbitrary precision: none built in. Represent big integers as little-endian
   digit lists; base 256 keeps each digit a byte for the wire, and products of
-  digits fit a U32.
+  digits fit a U32. Polynomial degree factors and coefficient indices must
+  not wrap a U32; use exact digit counters when the API promises arbitrary
+  degrees and test carry boundaries such as 255/256 and 65535/65536.
+- For several `Nat` additions, explicit `Nat.add(a, Nat.add(b, c))` avoids
+  ambiguous `+` quantity/operator syntax; `1n+k` is the successor pattern.
 - `List.sort(~A, ~le, +xs)` is a merge sort; `List.reverse(&2, A, xs)`,
   `List.append(&2, A, xs, ys)`, `List.length`, `Maybe.default(&2, A, m, d)`.
   Quantity arguments (`&2`) and type arguments are explicit.
@@ -217,8 +245,14 @@ import ./arith.bend as A
   extension instead.
 - Each call into the extension gets a runtime instance and one worker thread.
   Parallel calls (`a b = f(x) g(y)`) are not parallel under bend-python.
-- Decoding and re-encoding per call is cheap compared to Python recursion:
-  a 286-term polynomial prints in ~5 ms.
+- Run cheap eligibility checks before conversions that can expand a compact
+  expression into a dense polynomial. Strict argument evaluation can otherwise
+  perform the entire expansion before discovering an unsupported coefficient.
+- Partition factors or collect terms as lists, then canonicalize once. Building
+  a canonical product at each list step repeatedly traverses growing tails.
+- Measure candidate generation and certificate checking separately. A quick
+  rule can still be dominated by differentiation or normalization of its
+  result; small successful examples do not establish acceptable scaling.
 
 ## 9. Checker errors and fixes
 
@@ -226,8 +260,9 @@ import ./arith.bend as A
 |---|---|---|
 | `a match cannot scrutinize a computed value` | `match f(x):` or `(a, b) = f(x)` | Helper def taking the value as a parameter |
 | `a match on a parameter or field (this name is a def or a consumed binder)` | Nested match on a parameter, wrong scrutinee order, or a let before the match | One `match a b:` in parameter order; lets inside cases |
-| `expected a filled definition ... observed <name>` | Calling a def defined below (or an unproved law) | Reorder (`python3 $SKILL/scripts/reorder_defs.py`), or make the caller unsafe |
+| `expected a filled definition ... observed <name>` | Calling a def defined below (or an unproved law) | Reorder (`python3 $SKILL/scripts/reorder_defs.py`), pass a continuation, or fill the law |
 | `<x> (consumed more than once)` | Affine variable used twice | `+x` on the parameter, pattern field, let or law binder |
+| `expected @_:A -> ... observed @+a:A -> ...` | Callback binder quantities differ | Adapt with `x => f(x)`, or `~(a => b => f(a, b))` for a curried template |
 | `expected : Data  observed : Type` | Affine list/pair inside Data | `List<&2, T>`, a Data record type instead of `A & B` |
 | `expected : -G  observed : G` | Erased parameter used in a returned type | Drop the `-` |
 | `expected a term, observed ']'` | `[]` after the first pattern | `Nil{}`, `Con{x, Nil{}}` |
@@ -240,4 +275,4 @@ import ./arith.bend as A
 | `expected a quantified datatype after +` | `+U32` inside a type argument | `List<&2, U32>` |
 | `expected : List<&2, U32> observed : List<U32>` | Mixed quantities | Copy the list, or align the signature |
 | Goal mismatch on `%e : P` | Rewrite direction | See PROOFS.md |
-| `cycle through X` (from reorder_defs.py) | Mutual recursion among safe defs | Merge the defs or make one unsafe |
+| `cycle through X` (from reorder_defs.py) | Mutual recursion among safe defs | Merge the defs or pass a continuation; use fuel if descent is hidden |

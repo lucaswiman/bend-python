@@ -25,7 +25,17 @@
   (in the vendored `bend/`) are checked too.
 - Keep unproved-but-approved claims in a file that does not gate the build
   (e.g. `PENDING.bend`) and test that it reports exactly one TODO per law, so
-  the statements keep type-checking as the code changes.
+  the statements keep type-checking as the code changes. Account separately
+  for any placeholder defs; an expected TODO does not excuse another error.
+  Draft the contract there first, then promote proved claims and remove their
+  pending copies. Preserve unrelated claims.
+
+During proof development, temporarily add `import ./PENDING.bend as Pending`
+to `PROOF.bend` and write `def Pending.name(args): ...`. Keep the existing
+`LAWS.bend as Laws` import. Other open pending claims will also appear as TODOs
+in this temporary check. At promotion, move the proved statements to
+`LAWS.bend`, rename their proof defs to `Laws.name`, and remove the pending
+import from the build gate. Its final check must have no remaining TODOs.
 
 ## 2. Stating laws
 
@@ -41,7 +51,9 @@ law name:
 - Binders used more than once in the proof need `for +x`.
 - Hypotheses are stated as `{predicate(x) == True{} : Bool}` with the
   predicate written as an ordinary Bool-valued def (a *validator*). This keeps
-  the law readable and lets tests call the same validator at runtime.
+  the law readable and lets tests call the same validator at runtime. The
+  conclusion should state the promised property independently of a mutable
+  runtime checker; otherwise weakening that checker can weaken the law too.
 - Prefer statements about the functions users actually call. Laws that only
   restate how a function is built (definitional laws, proved by `{==}`) are
   still valuable as a specification (for example, "d/dx sin(u) = cos(u)·u'")
@@ -49,6 +61,11 @@ law name:
 - Exact-equality laws about normalized or simplified output are often false
   even when the math is true, because two routes produce different normal
   forms. Search for counterexamples before proposing them.
+- Separate structural shape (sorted terms, trimmed coefficients) from valid
+  numeric leaves, semantic value preservation, and domain preservation.
+  Structural normal form alone does not establish valid or reduced rationals.
+  A partial evaluator should distinguish undefined from a defined zero and
+  say whether preservation is required only when the source is defined.
 
 ## 3. Proof mechanics
 
@@ -168,20 +185,50 @@ The checker only unfolds what it can compute. Shape code so the goal reduces:
 - Keep list order predictable: a right fold (`f(x, go(rest))`) preserves order;
   an accumulator reverses it and forces reverse lemmas.
 - Prefer structural recursion, fuel, or stack machines to unsafe defs: induction
-  is impossible over unsafe recursion.
+  needs a decreasing argument rather than an assumed recursive equation.
 - Separate *shape invariants* into a Bool validator (the law hypothesis) and
   test from Python that every result satisfies it before trying to prove
   closure.
 - `Bool.and(a, b)` chains in validators should follow the order the proof
   needs them.
 
+**Certify candidates independently of their generator.** Separate generation,
+validation, and acceptance. Return a successful result only when the validator
+passes. Prove that acceptance implies its explicit obligations, then lift that
+fact through the dispatcher using the equality witnessing success. Project a
+`Bool.and` validator into separate laws for reconstruction, normalization,
+degree bounds, or other contracts. A generator bug may then produce failure
+without producing a false successful result.
+
+For example, a polynomial primitive certificate can require normalized output,
+zero constant coefficient, and `diff(primitive) == norm(input)`. Those are
+identities under the implemented coefficient arithmetic; they do not prove
+that arithmetic is a field or that integration always succeeds. For a symbolic
+primitive, distinguish equal derivative syntax, a defined zero rational
+residual, and equal expanded forms. A residual with an undefined or zero
+denominator cannot certify zero. State these alternatives in the law rather
+than merely concluding `valid(input, primitive) == True`.
+
+Success-conditional laws can be vacuous if every candidate is rejected. Add
+computational witnesses for real successful inputs and wrong candidates;
+separately test supported families against an independent reference. These
+witnesses establish exercised cases, not total success or abstract semantics.
+
 ## 6. Mutation checking
 
-For each new law: edit the code it covers (swap arguments, drop a term, return
-a constant), run `bend PROOF.bend`, confirm it fails **at that law** (read the
-`Location:` line), and restore the code. A failure caused by affinity or a
-syntax error does not count; mutate semantically. Record that each law was
-mutation-tested.
+For each new law, make a behavior-changing mutation in a temporary copy of the
+source/import tree. Keep the working implementation intact. First check the
+mutated runtime module without its proof gate: it must still type-check. Then
+run `bend PROOF.bend` and inspect `Location:` for a failure in the claimed law
+or its supporting proof. A syntax, affinity, missing import, or unrelated
+existing failure does not count.
+
+Mutate coefficient formulas as well as certificate guards. For certificates,
+drop each obligation, bypass rejection, and accept wrong or undefined
+residuals. Computational rejection witnesses complement universal laws. A
+surviving mutation may leave the stated property unchanged, remove a redundant
+check, or expose a weak/vacuous contract; decide which before rewriting the
+law. Record the mutations actually checked and their observed failures.
 
 ## 7. What a proof does and does not cover
 
@@ -189,5 +236,9 @@ mutation-tested.
   the C bridge, CPython, the Python wrapper, or the generated runtime.
 - U32 is proved about the Word model; the compiled code uses native integers.
 - A proof that relies on unsafe defs holds only if those defs terminate on the
-  inputs involved; `bend` lists them. Say so when reporting.
+  inputs involved; `bend` lists them. Safe structural dispatch can still depend
+  on unsafe arithmetic or normalization. Say so when reporting.
+- Checked certificates establish soundness of successful results under the
+  implemented operations. Completeness, total success, field laws, conversion
+  semantics, and analytic correctness are separate obligations unless proved.
 - Report proved, tested and trusted properties separately.
