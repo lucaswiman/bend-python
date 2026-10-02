@@ -20,23 +20,23 @@ FIXTURE = """import Base
 import ./bend/python.bend as Python
 import ./bend/tensor.bend as Tensor
 
-def read_out(result: Pair(Python.F32View, F32)) -> IO(Python.Object):
+def read_out(result: Pair(Python.F32View<False{}>, F32)) -> IO(Python.Object):
   (view, value) = result
   do IO<Python.Object>:
-    Python.f32_release(view)
+    Python.f32_release(False{}, view)
     Python.from_f32(value)
 
-def read_index(~index: Nat -> Nat, result: Pair(Python.F32View, Nat)) -> IO(Python.Object):
+def read_index(~index: Nat -> Nat, result: Pair(Python.F32View<False{}>, Nat)) -> IO(Python.Object):
   (view, count) = result
   do IO<Python.Object>:
-    result : Pair(Python.F32View, F32) <- Python.f32_read(view, index(count))
+    result : Pair(Python.F32View<False{}>, F32) <- Python.f32_read(False{}, view, index(count))
     read_out(result)
 
 def read_at(~index: Nat -> Nat, request: Python.Call) -> IO(Python.Object):
   do IO<Python.Object>:
     value : Python.Object <- Python.unary(request)
-    view : Python.F32View <- Python.borrow_f32(value, False{})
-    sized : Pair(Python.F32View, Nat) <- Python.f32_size(view)
+    view : Python.F32View<False{}> <- Python.borrow_f32(value, False{})
+    sized : Pair(Python.F32View<False{}>, Nat) <- Python.f32_size(False{}, view)
     read_index(~index, sized)
 
 def dimensions(values: List<Nat>) -> IO(List<Python.Object>):
@@ -49,56 +49,119 @@ def dimensions(values: List<Nat>) -> IO(List<Python.Object>):
         rest : List<Python.Object> <- dimensions(tail)
         return value <> rest
 
-def shape_out(result: Pair(Python.F32View, List<Nat>)) -> IO(Python.Object):
+def shape_out(result: Pair(Python.F32View<False{}>, List<Nat>)) -> IO(Python.Object):
   (view, shape) = result
   do IO<Python.Object>:
-    Python.f32_release(view)
+    Python.f32_release(False{}, view)
     values : List<Python.Object> <- dimensions(shape)
     Python.tuple(values)
 
 def shape(request: Python.Call) -> IO(Python.Object):
   do IO<Python.Object>:
     value : Python.Object <- Python.unary(request)
-    view : Python.F32View <- Python.borrow_f32(value, False{})
-    shaped : Pair(Python.F32View, List<Nat>) <- Python.f32_shape(view)
+    view : Python.F32View<False{}> <- Python.borrow_f32(value, False{})
+    shaped : Pair(Python.F32View<False{}>, List<Nat>) <- Python.f32_shape(False{}, view)
     shape_out(shaped)
 
-def bad_view(view: Python.F32View) -> IO(Python.Object):
+def bad_view(view: Python.F32View<False{}>) -> IO(Python.Object):
   match view:
     case Python.F32View{id}:
+      forged = {Python.F32View{U32.inc(id)} : Python.F32View<False{}>}
       do IO<Python.Object>:
-        result : Pair(Python.F32View, F32) <- Python.f32_read(Python.F32View{U32.inc(id)}, 0n)
+        result : Pair(Python.F32View<False{}>, F32) <- Python.f32_read(False{}, forged, 0n)
         read_out(result)
 
-def released(view: Python.F32View) -> IO(Python.Object):
+def released(view: Python.F32View<False{}>) -> IO(Python.Object):
   match view:
     case Python.F32View{+id}:
       do IO<Python.Object>:
-        Python.f32_release(Python.F32View{id})
-        result : Pair(Python.F32View, F32) <- Python.f32_read(Python.F32View{id}, 0n)
+        Python.f32_release(False{}, Python.F32View{id})
+        result : Pair(Python.F32View<False{}>, F32) <-
+          Python.f32_read(False{}, Python.F32View{id}, 0n)
         read_out(result)
 
-def readonly_write(view: Python.F32View) -> IO(Python.Object):
-  do IO<Python.Object>:
-    updated : Python.F32View <- Python.f32_write(view, 0n, 42.0)
-    Python.f32_release(updated)
-    Python.none()
+def readonly_write(view: Python.F32View<False{}>) -> IO(Python.Object):
+  match view:
+    case Python.F32View{id}:
+      do IO<Python.Object>:
+        updated : Python.F32View<True{}> <-
+          Python.f32_write({Python.F32View{id} : Python.F32View<True{}>}, 0n, 42.0)
+        Python.f32_release(True{}, updated)
+        Python.none()
 
-def abort(view: Python.F32View) -> IO(Python.Object):
+def forged_map(offset: U32, view: Python.F32View<False{}>) -> IO(Python.Object):
+  match view:
+    case Python.F32View{id}:
+      writable = {Python.F32View{U32.add(id, offset)} : Python.F32View<True{}>}
+      do IO<Python.Object>:
+        updated : Python.F32View<True{}> <-
+          Python.f32_map(writable, count => Tensor.map_steps(~(x => (x / 2.0 : F32)), count))
+        Python.f32_release(True{}, updated)
+        Python.none()
+
+def captured_steps(count: Nat, +offset: F32) -> Python.F32MapSteps(count):
+  match count:
+    case 0n:
+      Unit{}
+    case 1n+pred:
+      value => ((value + offset : F32), captured_steps(pred, (offset + 1.0 : F32)))
+
+def counted_steps(+count: Nat, seed: F32) -> Python.F32MapSteps(count):
+  captured_steps(count, (F32.from_nat(count) + seed : F32))
+
+def captured_values(values: Pair(Python.Object, Python.Object)) -> IO(Python.Object):
+  (value, scalar) = values
+  +original = value
+  do IO<Python.Object>:
+    seed : F32 <- Python.to_f32(scalar)
+    view : Python.F32View<True{}> <- Python.borrow_f32(original, True{})
+    updated : Python.F32View<True{}> <-
+      Python.f32_map(view, count => counted_steps(count, seed))
+    Python.f32_release(True{}, updated)
+    return original
+
+def captured_map(request: Python.Call) -> IO(Python.Object):
+  do IO<Python.Object>:
+    values : Pair(Python.Object, Python.Object) <- Python.binary(request)
+    captured_values(values)
+
+# Unsafe equality exists only in this fixture to exercise the native ABI checks.
+@unsafe def lie(-left: Nat, -right: Nat) -> {left == right : Nat}:
+  lie(left, right)
+
+def short_steps(count: Nat) -> Python.F32MapSteps(count):
+  %lie(0n, count) : Python.F32MapSteps(_)
+  Unit{}
+
+def long_steps(count: Nat) -> Python.F32MapSteps(count):
+  %lie(1n, count) : Python.F32MapSteps(_)
+  value => (value, Unit{})
+
+def update(~operation: Python.F32View<True{}> -> IO(Python.F32View<True{}>),
+  request: Python.Call) -> IO(Python.Object):
+  do IO<Python.Object>:
+    +value : Python.Object <- Python.unary(request)
+    view : Python.F32View<True{}> <- Python.borrow_f32(value, True{})
+    updated : Python.F32View<True{}> <- operation(view)
+    Python.f32_release(True{}, updated)
+    return value
+
+def abort(view: Python.F32View<False{}>) -> IO(Python.Object):
   Python.type_error(Python.Object, "after borrowing")
 
-def with_view(~f: Python.F32View -> IO(Python.Object), request: Python.Call) -> IO(Python.Object):
+def with_view(~f: Python.F32View<False{}> -> IO(Python.Object),
+  request: Python.Call) -> IO(Python.Object):
   do IO<Python.Object>:
     value : Python.Object <- Python.unary(request)
-    view : Python.F32View <- Python.borrow_f32(value, False{})
+    view : Python.F32View<False{}> <- Python.borrow_f32(value, False{})
     f(view)
 
 def reentrant_values(values: Pair(Python.Object, Python.Object)) -> IO(Python.Object):
   (value, callback) = values
   do IO<Python.Object>:
-    view : Python.F32View <- Python.borrow_f32(value, False{})
+    view : Python.F32View<False{}> <- Python.borrow_f32(value, False{})
     ignored : Python.Object <- Python.invoke(callback, [])
-    result : Pair(Python.F32View, F32) <- Python.f32_read(view, 0n)
+    result : Pair(Python.F32View<False{}>, F32) <- Python.f32_read(False{}, view, 0n)
     read_out(result)
 
 def reentrant(request: Python.Call) -> IO(Python.Object):
@@ -114,6 +177,14 @@ def main() -> IO(Unit):
     Python.export("bad_view", with_view(~bad_view), True{})
     Python.export("released", with_view(~released), True{})
     Python.export("readonly_write", with_view(~readonly_write), True{})
+    Python.export("readonly_map", with_view(~(view => forged_map(0, view))), True{})
+    Python.export("bad_map", with_view(~(view => forged_map(1, view))), True{})
+    Python.export("write_first", update(~(view => Python.f32_write(view, 0n, 42.0))), True{})
+    Python.export("captured_map", captured_map, True{})
+    Python.export("short_map",
+      update(~(view => Python.f32_map(view, count => short_steps(count)))), True{})
+    Python.export("long_map",
+      update(~(view => Python.f32_map(view, count => long_steps(count)))), True{})
     Python.export("abort", with_view(~abort), True{})
     Python.export("reentrant", reentrant, True{})
     Tensor.export_numpy_f32_inplace(~(x => (x / 2.0 : F32)), "half_inplace", True{})
@@ -127,7 +198,7 @@ class BufferViewTests(unittest.TestCase):
 
         cls.directory = tempfile.TemporaryDirectory()
         cls.addClassCleanup(cls.directory.cleanup)
-        path = Path(cls.directory.name)
+        path = cls.path = Path(cls.directory.name)
         vendor(path / "bend")
         # A real SIGINT after a native store exercises the production batch check
         # deterministically. Only this temporary fixture contains the signal hook.
@@ -140,18 +211,17 @@ __attribute__((visibility("default"))) void bp_test_interrupt_after_store(void) 
   bp_test_interrupt = true;
 }
 """
-        marker = "static bool bp_memory_effect(Env e, BpCall* call) {"
+        marker = "static void bp_store("
         if source.count(marker) != 1:
-            raise AssertionError("missing native memory effect boundary")
+            raise AssertionError("missing shared native store boundary")
         source = source.replace(marker, hook + "\n" + marker)
-        store = "      memcpy(address, &bits, sizeof(bits));"
+        store = "  memcpy(address, &bits, sizeof(bits));"
         if source.count(store) != 1:
             raise AssertionError("expected one shared native store")
         shim.write_text(
             source.replace(
                 store,
-                store
-                + "\n      if (bp_test_interrupt) { bp_test_interrupt = false; raise(SIGINT); }",
+                store + "\n  if (bp_test_interrupt) { bp_test_interrupt = false; raise(SIGINT); }",
             )
         )
         (path / "module.bend").write_text(FIXTURE)
@@ -189,7 +259,6 @@ __attribute__((visibility("default"))) void bp_test_interrupt_after_store(void) 
             ("past_end", IndexError),
             ("bad_view", ValueError),
             ("released", ValueError),
-            ("readonly_write", BufferError),
             ("abort", TypeError),
         ):
             with self.subTest(operation=name), self.assertRaises(exception):
@@ -198,6 +267,97 @@ __attribute__((visibility("default"))) void bp_test_interrupt_after_store(void) 
             value.pop()
             self.assertEqual(list(value), [2, 4, 8])
         self.assertEqual(bend_example.square(7), 49)
+
+    def test_build_rejects_readonly_writes_and_inexact_map_plans(self):
+        from bend_python.build import _compiler
+
+        prelude = (
+            "import Base\nimport ./bend/python.bend as Python\n"
+            "import ./bend/tensor.bend as Tensor\n"
+        )
+        contracts = {
+            "valid": (
+                "def valid(count: Nat) -> Python.F32MapSteps(count):\n"
+                "  Tensor.map_steps(~(x => x), count)\n"
+            ),
+            "readonly_write": (
+                "def bad(view: Python.F32View<False{}>) -> IO(Python.F32View<True{}>):\n"
+                "  Python.f32_write(view, 0n, 1.0)\n"
+            ),
+            "readonly_modify": (
+                "def bad(view: Python.F32View<False{}>) -> IO(Python.F32View<True{}>):\n"
+                "  Python.f32_modify(view, 0n, x => x)\n"
+            ),
+            "readonly_map": (
+                "def bad(view: Python.F32View<False{}>) -> IO(Python.F32View<True{}>):\n"
+                "  Python.f32_map(view, count => Tensor.map_steps(~(x => x), count))\n"
+            ),
+            "short_plan": (
+                "def bad(count: Nat) -> Python.F32MapSteps(count):\n"
+                "  match count:\n    case 0n:\n      Unit{}\n    case 1n+pred:\n      Unit{}\n"
+            ),
+            "long_plan": (
+                "def bad(count: Nat) -> Python.F32MapSteps(count):\n"
+                "  match count:\n    case 0n:\n      value => (value, Unit{})\n"
+                "    case 1n+pred:\n      value => (value, bad(pred))\n"
+            ),
+        }
+        for name, contract in contracts.items():
+            with self.subTest(contract=name):
+                path = self.path / "contract.bend"
+                path.write_text(prelude + contract)
+                result = subprocess.run(
+                    [_compiler(), str(path), "--check-only"],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                output = result.stdout + result.stderr
+                if name == "valid":
+                    self.assertEqual(result.returncode, 0, output)
+                else:
+                    self.assertNotEqual(result.returncode, 0, output)
+                    self.assertIn("expected :", output)
+                    self.assertIn("observed :", output)
+
+    def test_native_permissions_and_checked_indexed_write(self):
+        for operation, exception, counts in (
+            ("readonly_write", BufferError, (3,)),
+            ("readonly_map", BufferError, (0, 3)),
+            ("bad_map", ValueError, (0, 3)),
+        ):
+            for count in counts:
+                value = array.array("f", [2]) * count
+                with self.subTest(count=count, operation=operation):
+                    with self.assertRaises(exception):
+                        getattr(self.fixture, operation)(value)
+                    self.assertEqual(list(value), [2] * count)
+                    value.append(9)
+                    value.pop()
+        value = array.array("f", [2, 4, 8])
+        self.assertIs(self.fixture.write_first(value), value)
+        self.assertEqual(list(value), [42, 4, 8])
+        value.append(16)
+        with self.assertRaises(IndexError):
+            self.fixture.write_first(array.array("f"))
+
+    def test_native_map_rejects_unsafe_inexact_plans_without_writes(self):
+        for operation, elements in (("short_map", [2, 4, 8]), ("long_map", [])):
+            with self.subTest(operation=operation):
+                value = array.array("f", elements)
+                with self.assertRaisesRegex(RuntimeError, "invalid.*map"):
+                    getattr(self.fixture, operation)(value)
+                self.assertEqual(list(value), elements)
+                value.append(16)
+                self.assertEqual(self.fixture.last(value), 16)
+
+    def test_dependent_map_uses_real_count_and_consumes_captured_steps_in_order(self):
+        for count in (0, 1, 4095, 4096, 4097):
+            with self.subTest(count=count):
+                value = array.array("f", range(count))
+                self.assertIs(self.fixture.captured_map(value, 7.5), value)
+                self.assertEqual(list(value), [count + 7.5 + 2 * i for i in range(count)])
+                value.append(16)
 
     def test_reentrant_borrow_pins_owner_and_calls_remain_independent(self):
         value = array.array("f", [7])

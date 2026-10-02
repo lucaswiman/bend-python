@@ -69,7 +69,8 @@ typedef struct {
   const char* view_error;
   PyObject* view_exception;
   PyObject* module;
-  Term continuation, argument, function;
+  Term continuation, argument, function, map_step;
+  size_t map_view, map_remaining;
   Term fields[5];
   u32 effect;
   u32* buffer;
@@ -396,7 +397,10 @@ static void bp_decode(Env e, BpCall* call) {
 #ifdef CID(f32_release)
     case CID(f32_release):
 #endif
-#if defined(CID(f32_size)) || defined(CID(f32_shape)) || defined(CID(f32_read)) || defined(CID(f32_write)) || defined(CID(f32_release))
+#ifdef CID(f32_map)
+    case CID(f32_map):
+#endif
+#if defined(CID(f32_size)) || defined(CID(f32_shape)) || defined(CID(f32_read)) || defined(CID(f32_write)) || defined(CID(f32_release)) || defined(CID(f32_map))
       f[0] = bp_unbox_as(e, f[0], CID(F32View)); break;
 #endif
 #ifdef CID(f32_modify)
@@ -422,12 +426,8 @@ static BpView* bp_view(BpCall* call, u64 handle) {
   return &call->views[index];
 }
 
-static char* bp_view_at(BpCall* call, BpView* view, u64 index) {
-  if (index >= view->size) {
-    call->view_error = "float32 view index out of bounds";
-    call->view_exception = PyExc_IndexError;
-    return NULL;
-  }
+// Only checked indexed effects and the count-bounded map cursor call this.
+static char* bp_view_address(BpView* view, u64 index) {
   if (view->contiguous) return (char*)view->buffer.buf + index * sizeof(float);
   Py_ssize_t offset = 0;
   for (int axis = view->buffer.ndim; axis-- > 0;) {
@@ -437,6 +437,69 @@ static char* bp_view_at(BpCall* call, BpView* view, u64 index) {
   }
   return (char*)view->buffer.buf + offset;
 }
+
+static char* bp_view_at(BpCall* call, BpView* view, u64 index) {
+  if (index >= view->size) {
+    call->view_error = "float32 view index out of bounds";
+    call->view_exception = PyExc_IndexError;
+    return NULL;
+  }
+  return bp_view_address(view, index);
+}
+
+static bool bp_writable(BpCall* call, BpView* view) {
+  if (view->writable) return true;
+  call->view_error = "float32 view was borrowed read-only";
+  call->view_exception = PyExc_BufferError;
+  return false;
+}
+
+static void bp_store(char* address, u32 bits) {
+  memcpy(address, &bits, sizeof(bits));
+}
+
+#ifdef CID(f32_map)
+static bool bp_map_valid(BpCall* call) {
+  Term step = call->map_step;
+  bool valid = call->map_remaining ? term_tag(step) == TAG_CLO :
+    ((term_tag(step) == TAG_PAK || term_tag(step) == TAG_CTR) && term_aux(step) == CID(Unit));
+  if (!valid) {
+    call->view_error = "invalid float32 map program";
+    call->view_exception = PyExc_RuntimeError;
+  }
+  return valid;
+}
+
+// Safe dependent programs supply exactly this many single-use affine steps.
+// The native counter also bounds unsafe short/long programs independently.
+static void bp_map_next(Env e, BpCall* call) {
+  Term step = call->map_step;
+  call->map_step = 0;
+  if (call->map_remaining == 0) {
+    term_drop(e, step);
+    call->argument = term_pak(CID(F32View), bp_seal(call->key ^ 0x66333276696577ull, call->map_view));
+    return;
+  }
+  BpView* view = &call->views[call->map_view];
+  char* address = bp_view_address(view, view->size - call->map_remaining);
+  u32 bits;
+  memcpy(&bits, address, sizeof(bits));
+  Term result = bp_apply(e, step, (Term)bits);
+  if (term_tag(result) != TAG_CTR || term_aux(result) != CID(Tuple)) {
+    call->map_step = result;
+    call->view_error = "invalid float32 map result";
+    call->view_exception = PyExc_RuntimeError;
+    return;
+  }
+  Term fields[2];
+  spare_free(e, 1, ctr_take(e, result, 2, fields));
+  call->map_step = fields[1];
+  --call->map_remaining;
+  // Validate the successor before committing this cell, including at count 0.
+  if (!bp_map_valid(call)) return;
+  bp_store(address, (u32)fields[0]);
+}
+#endif
 
 static bool bp_memory_effect(Env e, BpCall* call) {
   switch (call->effect) {
@@ -455,11 +518,37 @@ static bool bp_memory_effect(Env e, BpCall* call) {
 #ifdef CID(f32_modify)
     case CID(f32_modify):
 #endif
-#if defined(CID(f32_size)) || defined(CID(f32_shape)) || defined(CID(f32_read)) || defined(CID(f32_write)) || defined(CID(f32_modify))
+#ifdef CID(f32_map)
+    case CID(f32_map):
+#endif
+#if defined(CID(f32_size)) || defined(CID(f32_shape)) || defined(CID(f32_read)) || defined(CID(f32_write)) || defined(CID(f32_modify)) || defined(CID(f32_map))
     {
+#ifdef CID(f32_map)
+      if (call->effect == CID(f32_map)) {
+        call->map_step = call->fields[1];
+        call->argument = 0;
+      }
+#endif
       BpView* view = bp_view(call, call->fields[0]);
       if (!view) return true;
       Term handle = term_pak(CID(F32View), (u32)call->fields[0]);
+#ifdef CID(f32_map)
+      if (call->effect == CID(f32_map)) {
+        if (!bp_writable(call, view)) return true;
+        if (term_tag(call->map_step) != TAG_CLO) {
+          call->view_error = "invalid float32 map producer";
+          call->view_exception = PyExc_RuntimeError;
+          return true;
+        }
+        call->map_view = (size_t)(view - call->views);
+        call->map_remaining = view->size;
+        Term producer = call->map_step;
+        call->map_step = 0;
+        call->map_step = bp_apply(e, producer, (Term)view->size);
+        bp_map_valid(call);
+        return true;
+      }
+#endif
 #ifdef CID(f32_size)
       if (call->effect == CID(f32_size)) {
         call->argument = io_tup(e, handle, (Term)view->size); return true;
@@ -482,11 +571,7 @@ static bool bp_memory_effect(Env e, BpCall* call) {
         call->argument = io_tup(e, handle, (Term)bits); return true;
       }
 #endif
-      if (!view->writable) {
-        call->view_error = "float32 view was borrowed read-only";
-        call->view_exception = PyExc_BufferError;
-        return true;
-      }
+      if (!bp_writable(call, view)) return true;
 #ifdef CID(f32_modify)
       if (call->effect == CID(f32_modify)) {
         memcpy(&bits, address, sizeof(bits));
@@ -496,7 +581,7 @@ static bool bp_memory_effect(Env e, BpCall* call) {
       {
         bits = (u32)call->fields[2];
       }
-      memcpy(address, &bits, sizeof(bits));
+      bp_store(address, bits);
       call->argument = handle; return true;
     }
 #endif
@@ -541,35 +626,44 @@ static bool bp_native(BpCall* call, BpOperation operation) {
       }
       case BP_RESUME: {
         call->native_more = false;
-        // Bound cancellation latency without attaching for every element.
+        // Check signals between batches without attaching for every element.
         for (size_t operations = 0;; ++operations) {
-          if (call->pending) {
-            call->argument = bp_pack(e, call);
-            call->pending = false;
-            free(call->buffer); call->buffer = NULL;
+#ifdef CID(f32_map)
+          if (call->map_step) {
+            bp_map_next(e, call);
+            if (call->view_error) break;
+          } else
+#endif
+          {
+            if (call->pending) {
+              call->argument = bp_pack(e, call);
+              call->pending = false;
+              free(call->buffer); call->buffer = NULL;
+            }
+            Term request = bp_apply(e, call->continuation, call->argument);
+            call->continuation = 0;
+            call->effect = (u32)term_aux(request);
+            if (call->effect == CID(Emit)) {
+              Term value;
+              spare_free(e, 0, ctr_take(e, request, 1, &value));
+              if (call->module) term_drop(e, value);
+              else call->result = bp_unbox(e, value);
+              call->done = true;
+              break;
+            }
+            u32 n = cid_arity(call->effect);
+            if (n == 0 || n > 5) bendpy_panic("unsupported foreign effect arity");
+            spare_free(e, cls_fit(n), ctr_take(e, request, n, call->fields));
+            call->continuation = call->fields[n - 1];
+            bp_decode(e, call);
+            if (!bp_memory_effect(e, call) || call->view_error) break;
           }
-          Term request = bp_apply(e, call->continuation, call->argument);
-          call->continuation = 0;
-          call->effect = (u32)term_aux(request);
-          if (call->effect == CID(Emit)) {
-            Term value;
-            spare_free(e, 0, ctr_take(e, request, 1, &value));
-            if (call->module) term_drop(e, value);
-            else call->result = bp_unbox(e, value);
-            call->done = true;
-            break;
-          }
-          u32 n = cid_arity(call->effect);
-          if (n == 0 || n > 5) bendpy_panic("unsupported foreign effect arity");
-          spare_free(e, cls_fit(n), ctr_take(e, request, n, call->fields));
-          call->continuation = call->fields[n - 1];
-          bp_decode(e, call);
-          if (!bp_memory_effect(e, call) || call->view_error) break;
           if (operations == 4095) { call->native_more = true; break; }
         }
         break;
       }
       case BP_DROP:
+        if (call->map_step) { term_drop(e, call->map_step); call->map_step = 0; }
         if (call->native_more) {
           term_drop(e, call->argument); call->native_more = false;
         }

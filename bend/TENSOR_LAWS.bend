@@ -58,15 +58,54 @@ law close_live:
 law double_close_rejected:
   {State.close(State.Released{}) == None{} : Maybe<&2, State.Lease>}
 
+law cursor_initial:
+  for +length: Nat
+  {State.position(length, length) == 0n : Nat}
+
+law cursor_terminal:
+  for length: Nat
+  {State.position(length, 0n) == length : Nat}
+
+law cursor_conservation:
+  for +length: Nat
+  for +remaining: Nat
+  for bounded: {Nat.is_le(remaining, length) == True{} : Bool}
+  {Nat.add(State.position(length, remaining), remaining) == length : Nat}
+
+law cursor_in_bounds:
+  for +length: Nat
+  for +pred: Nat
+  for bounded: {Nat.is_le(1n+pred, length) == True{} : Bool}
+  {Nat.is_lt(State.position(length, 1n+pred), length) == True{} : Bool}
+
+law cursor_advance:
+  for +length: Nat
+  for +pred: Nat
+  for bounded: {Nat.is_le(1n+pred, length) == True{} : Bool}
+  {State.position(length, State.remaining_after_step(1n+pred)) == 1n+State.position(length, 1n+pred) : Nat}
+
+law cursor_decrease:
+  for +length: Nat
+  for +pred: Nat
+  for bounded: {Nat.is_le(1n+pred, length) == True{} : Bool}
+  {Nat.is_le(State.remaining_after_step(1n+pred), length) == True{} : Bool}
+
 law map_zero:
-  for f: F32 -> F32
-  for view: Python.F32View
-  for index: Nat
-  {Tensor.map_loop(~f, 0n, view, index) == IO.pure(Python.F32View, view) : IO(Python.F32View)}
+  for memory: List<F32>
+  {State.apply_steps(0n, memory, Unit{}) == memory : List<F32>}
 
 law map_step:
   for f: F32 -> F32
   for count: Nat
-  for view: Python.F32View
-  for index: Nat
-  {Tensor.map_loop(~f, 1n+count, view, index) == IO.bind(Python.F32View, Python.F32View, Python.f32_modify(view, index, f), next => Tensor.map_loop(~f, count, next, Nat.add(index, 1n))) : IO(Python.F32View)}
+  for value: F32
+  {Tensor.map_steps(~f, 1n+count)(value) == (f(value), Tensor.map_steps(~f, count)) : Pair(F32, Python.F32MapSteps(count))}
+
+law map_count:
+  for count: Nat
+  for steps: Python.F32MapSteps(count)
+  {State.step_count(count, steps) == count : Nat}
+
+law map_elements:
+  for f: F32 -> F32
+  for memory: List<F32>
+  {State.apply_steps(List.length(&1, F32, memory), memory, Tensor.map_steps(~f, List.length(&1, F32, memory))) == List.map(~F32, ~F32, ~f, memory) : List<F32>}

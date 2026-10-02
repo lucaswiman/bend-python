@@ -3,7 +3,7 @@ import ./python.bend as Python
 
 # NumPy ndarrays and other native float32 buffer exporters. Borrowing never
 # normalizes strides, casts values or allocates element storage.
-def borrow_f32(value: Python.Object, writable: Bool) -> IO(Python.F32View):
+def borrow_f32(value: Python.Object, writable: Bool) -> IO(Python.F32View<writable>):
   Python.borrow_f32(value, writable)
 
 def require(allowed: Bool, message: String) -> IO(Unit):
@@ -41,20 +41,20 @@ def check_forward_ad(value: Python.Object, dual: Python.Object) -> IO(Unit):
 
 # Notify PyTorch before granting write access, so partial failures also
 # invalidate tensors saved for backward. Read-only borrows do not bump versions.
-def notify_write(value: Python.Object, autograd: Python.Object, writable: Bool, view: Python.F32View) -> IO(Python.F32View):
+def notify_write(value: Python.Object, autograd: Python.Object, writable: Bool, view: Python.F32View<writable>) -> IO(Python.F32View<writable>):
   match writable:
     case False{}:
-      IO.pure(Python.F32View, view)
+      IO.pure(Python.F32View<False{}>, view)
     case True{}:
-      do IO<Python.F32View>:
+      do IO<Python.F32View<True{}>>:
         graph : Python.Object <- Python.getattr(autograd, "graph")
         increment : Python.Object <- Python.getattr(graph, "increment_version")
         ignored : Python.Object <- Python.invoke(increment, [value])
         return view
 
 # numpy() without force=True shares CPU storage; never detach, cast or transfer.
-def borrow_torch_f32(+value: Python.Object, +writable: Bool) -> IO(Python.F32View):
-  do IO<Python.F32View>:
+def borrow_torch_f32(+value: Python.Object, +writable: Bool) -> IO(Python.F32View<writable>):
+  do IO<Python.F32View<writable>>:
     grad : Python.Object <- Python.getattr(value, "requires_grad")
     tracked : Bool <- Python.to_bool(grad)
     require(Bool.not(tracked), "detach tensors requiring gradients before borrowing")
@@ -65,37 +65,29 @@ def borrow_torch_f32(+value: Python.Object, +writable: Bool) -> IO(Python.F32Vie
     check_forward_ad(value, dual)
     numpy : Python.Object <- Python.getattr(value, "numpy")
     array : Python.Object <- Python.invoke(numpy, [])
-    view : Python.F32View <- Python.borrow_f32(array, writable)
+    view : Python.F32View<writable> <- Python.borrow_f32(array, writable)
     notify_write(value, autograd, writable, view)
 
-# The driver executes these memory effects in its native window, without
-# calling Python or attaching between elements. No array-sized temporary exists.
-def map_loop(~f: F32 -> F32, remaining: Nat, view: Python.F32View, +index: Nat) -> IO(Python.F32View):
-  match remaining:
+# The canonical program constructs only its next step; it retains no copy of
+# the array. Native storage traversal consumes this dependent program once.
+def map_steps(~f: F32 -> F32, count: Nat) -> Python.F32MapSteps(count):
+  match count:
     case 0n:
-      IO.pure(Python.F32View, view)
+      Unit{}
     case 1n+pred:
-      do IO<Python.F32View>:
-        updated : Python.F32View <- Python.f32_modify(view, index, f)
-        map_loop(~f, pred, updated, Nat.add(index, 1n))
+      value => (f(value), map_steps(~f, pred))
 
-def map_start(~f: F32 -> F32, result: Pair(Python.F32View, Nat)) -> IO(Python.F32View):
-  (view, count) = result
-  map_loop(~f, count, view, 0n)
+def map_inplace(~f: F32 -> F32, view: Python.F32View<True{}>) -> IO(Python.F32View<True{}>):
+  Python.f32_map(view, count => map_steps(~f, count))
 
-def map_inplace(~f: F32 -> F32, view: Python.F32View) -> IO(Python.F32View):
-  do IO<Python.F32View>:
-    result : Pair(Python.F32View, Nat) <- Python.f32_size(view)
-    map_start(~f, result)
-
-def map_object(~borrow: Python.Object -> IO(Python.F32View), ~f: F32 -> F32, +value: Python.Object) -> IO(Python.Object):
+def map_object(~borrow: Python.Object -> IO(Python.F32View<True{}>), ~f: F32 -> F32, +value: Python.Object) -> IO(Python.Object):
   do IO<Python.Object>:
-    view : Python.F32View <- borrow(value)
-    updated : Python.F32View <- map_inplace(~f, view)
-    Python.f32_release(updated)
+    view : Python.F32View<True{}> <- borrow(value)
+    updated : Python.F32View<True{}> <- map_inplace(~f, view)
+    Python.f32_release(True{}, updated)
     return value
 
-def invoke_map(~borrow: Python.Object -> IO(Python.F32View), ~f: F32 -> F32, request: Python.Call) -> IO(Python.Object):
+def invoke_map(~borrow: Python.Object -> IO(Python.F32View<True{}>), ~f: F32 -> F32, request: Python.Call) -> IO(Python.Object):
   do IO<Python.Object>:
     value : Python.Object <- Python.unary(request)
     map_object(~borrow, ~f, value)

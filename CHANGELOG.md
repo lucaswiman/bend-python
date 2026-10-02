@@ -19,8 +19,9 @@ when its version has a section below.
   buffer exporters; affine, sealed views with shape, indexed read/write and
   in-place Bend mapping. Supports strided layouts without allocating element
   storage, cleans up on errors/cancellation, and tracks PyTorch mutations.
-- Mutation-checked storage/lease laws and laws for the Bend traversal driver,
-  with real NumPy/PyTorch integration tests in CI.
+- Permission-indexed views and dependent, affine map programs for the actual
+  storage length, with mutation-checked elementwise semantics and cursor laws.
+  Real NumPy/PyTorch integration tests run in CI.
 
 ## [0.1.0] - 2026-09-29
 
