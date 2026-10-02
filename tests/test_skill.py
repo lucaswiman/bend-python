@@ -52,7 +52,11 @@ class SkillTests(unittest.TestCase):
         self.assertIn(f'bend-version: "{BEND_VERSION}"', text)
         version = re.search(r'^version = "([^"]+)"', (ROOT / "pyproject.toml").read_text(), re.M)[1]
         self.assertIn(f'bend-python-version: "{version}"', text)
-        for path in [SKILL / "SKILL.md", *SKILL.glob("references/*.md"), SKILL / "scripts/new_project.py"]:
+        for path in [
+            SKILL / "SKILL.md",
+            *SKILL.glob("references/*.md"),
+            SKILL / "scripts/new_project.py",
+        ]:
             for pinned in re.findall(r"bend-python==([\d.]+)", path.read_text()):
                 self.assertEqual(pinned, version, path)
 
@@ -99,7 +103,9 @@ class SkillTests(unittest.TestCase):
                 "def f(x: U32) -> U32:\n  g(x)\n\n"
                 "# The helper.\ndef g(x: U32) -> U32:\n  x\n"
             )
-            subprocess.run([sys.executable, str(SKILL / "scripts/reorder_defs.py"), str(path)], check=True)
+            subprocess.run(
+                [sys.executable, str(SKILL / "scripts/reorder_defs.py"), str(path)], check=True
+            )
             text = path.read_text()
             self.assertLess(text.index("# The helper.\ndef g"), text.index("def f"))
 
