@@ -114,6 +114,16 @@ static void bp_assert_attached(void) {
 #endif
 }
 
+static PyThreadState* bp_detach(BpCall* call) {
+  bp_assert_attached();
+#ifdef Py_GIL_DISABLED
+  // Without a GIL, staying attached only delays stop-the-world pauses.
+  return PyEval_SaveThread();
+#else
+  return call->release_gil ? PyEval_SaveThread() : NULL;
+#endif
+}
+
 static void bendpy_panic(const char* message) {
   bp_current->poisoned = true;
   snprintf(bp_current->error, sizeof(bp_current->error), "%s", message);
@@ -625,13 +635,7 @@ static bool bp_memory_effect(Env e, BpCall* call) {
 }
 
 static bool bp_native(BpCall* call, BpOperation operation) {
-  bp_assert_attached();
-#ifdef Py_GIL_DISABLED
-  // Without a GIL, staying attached only delays stop-the-world pauses.
-  PyThreadState* thread = PyEval_SaveThread();
-#else
-  PyThreadState* thread = call->release_gil ? PyEval_SaveThread() : NULL;
-#endif
+  PyThreadState* thread = bp_detach(call);
   bp_current = call->runtime;
   // Poisoned instances are never cached, so every lease starts healthy.
   if (setjmp(bp_current->escape)) {
@@ -1024,7 +1028,7 @@ static bool bp_blas(BpCall* call, int operation) {
   }
   // Every pointer is backed by a retained Py_buffer. No Python/runtime API is
   // called while detached; callers synchronize concurrent access to storage.
-  PyThreadState* state = call->release_gil ? PyEval_SaveThread() : NULL;
+  PyThreadState* state = bp_detach(call);
   if (operation == 0 && rows[0]) {
     typedef void (*Scale)(int*, float*, float*, int*);
     ((Scale)call->blas_functions[0])(&rows[0], &alpha, views[0]->buffer.buf, &steps[0]);
