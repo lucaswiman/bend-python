@@ -120,6 +120,31 @@ def captured_values(values: Pair(Python.Object, Python.Object)) -> IO(Python.Obj
     Python.f32_release(True{}, updated)
     return original
 
+def captured_closed_values(values: Pair(Python.Object, Python.Object)) -> IO(Python.Object):
+  (value, scalar) = values
+  do IO<Python.Object>:
+    offset : F32 <- Python.to_f32(scalar)
+    view : Python.F32View<True{}> <- Python.borrow_f32(value, True{})
+    updated : Python.F32View<True{}> <-
+      Python.f32_map_closed(view, x => (x + offset : F32))
+    Python.f32_release(True{}, updated)
+    Python.none()
+
+def captured_closed(request: Python.Call) -> IO(Python.Object):
+  do IO<Python.Object>:
+    values : Pair(Python.Object, Python.Object) <- Python.binary(request)
+    captured_closed_values(values)
+
+def forged_closed(offset: U32, view: Python.F32View<False{}>) -> IO(Python.Object):
+  match view:
+    case Python.F32View{id}:
+      writable = {Python.F32View{U32.add(id, offset)} : Python.F32View<True{}>}
+      do IO<Python.Object>:
+        updated : Python.F32View<True{}> <-
+          Python.f32_map_closed(writable, x => (x / 2.0 : F32))
+        Python.f32_release(True{}, updated)
+        Python.none()
+
 def captured_map(request: Python.Call) -> IO(Python.Object):
   do IO<Python.Object>:
     values : Pair(Python.Object, Python.Object) <- Python.binary(request)
@@ -181,6 +206,9 @@ def main() -> IO(Unit):
     Python.export("bad_map", with_view(~(view => forged_map(1, view))), True{})
     Python.export("write_first", update(~(view => Python.f32_write(view, 0n, 42.0))), True{})
     Python.export("captured_map", captured_map, True{})
+    Python.export("captured_closed", captured_closed, True{})
+    Python.export("readonly_closed", with_view(~(view => forged_closed(0, view))), True{})
+    Python.export("bad_closed", with_view(~(view => forged_closed(1, view))), True{})
     Python.export("short_map",
       update(~(view => Python.f32_map(view, count => short_steps(count)))), True{})
     Python.export("long_map",
@@ -325,6 +353,8 @@ __attribute__((visibility("default"))) void bp_test_interrupt_after_store(void) 
             ("readonly_write", BufferError, (3,)),
             ("readonly_map", BufferError, (0, 3)),
             ("bad_map", ValueError, (0, 3)),
+            ("readonly_closed", BufferError, (0, 3)),
+            ("bad_closed", ValueError, (0, 3)),
         ):
             for count in counts:
                 value = array.array("f", [2]) * count
@@ -358,6 +388,61 @@ __attribute__((visibility("default"))) void bp_test_interrupt_after_store(void) 
                 self.assertIs(self.fixture.captured_map(value, 7.5), value)
                 self.assertEqual(list(value), [count + 7.5 + 2 * i for i in range(count)])
                 value.append(16)
+
+    def test_closed_map_rejects_captured_callbacks_before_writes_and_releases(self):
+        for count in (0, 3):
+            value = array.array("f", [2]) * count
+            with self.assertRaisesRegex(RuntimeError, "captureless"):
+                self.fixture.captured_closed(value, 7.5)
+            self.assertEqual(list(value), [2] * count)
+            value.append(8)
+            self.assertIs(self.fixture.half_inplace(value), value)
+            self.assertEqual(value[-1], 4)
+
+    @unittest.skipUnless(NUMPY, "NumPy integration dependencies are optional")
+    def test_cursor_maps_match_independent_row_major_reference(self):
+        import numpy as np
+
+        # ndindex supplies an independent logical order, including carry resets
+        # and mixed negative/positive strides. Compare entire backing storage to
+        # catch writes in gaps as well as duplicate or omitted cells.
+        layouts = (
+            lambda base: base,
+            lambda base: base.T,
+            lambda base: base[::-1, ::-2, ::-1],
+            lambda base: base.T[::-2, ::-1, ::2],
+            lambda base: base[:0, ::-1],
+            lambda base: base[1:2, 2:3, 1:2].reshape(()),
+            lambda base: base.transpose(1, 0, 2)[::-1].reshape(1, 7, 1, 5, 1, -1, 1, 1),
+        )
+        for layout, captured, depth in (
+            (layout, captured, depth)
+            for layout in layouts
+            for captured in (False, True)
+            for depth in (3, 120)
+        ):
+            base = np.arange(35 * depth, dtype=np.float32).reshape(5, 7, depth)
+            value = layout(base)
+            expected_base = base.copy()
+            expected_view = layout(expected_base)
+            self.assertTrue(value.size == 0 or np.shares_memory(base, value))
+            for logical, index in enumerate(np.ndindex(value.shape)):
+                old = expected_view[index]
+                expected_view[index] = (
+                    old + np.float32(value.size + 7.5 + logical)
+                    if captured
+                    else old / np.float32(2)
+                )
+            with self.subTest(shape=value.shape, strides=value.strides, captured=captured):
+                pointer = value.__array_interface__["data"][0]
+                result = (
+                    self.fixture.captured_map(value, 7.5)
+                    if captured
+                    else self.fixture.half_inplace(value)
+                )
+                self.assertIs(result, value)
+                self.assertEqual(value.__array_interface__["data"][0], pointer)
+                np.testing.assert_array_equal(base, expected_base)
 
     def test_reentrant_borrow_pins_owner_and_calls_remain_independent(self):
         value = array.array("f", [7])

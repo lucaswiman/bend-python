@@ -73,6 +73,17 @@ typedef struct {
   bool live, writable, contiguous;
 } BpView;
 
+// O(rank) map metadata, independent of the number of stored elements.
+typedef struct {
+  size_t coordinate, dimension;
+  Py_ssize_t stride, rewind;
+} BpMapAxis;
+typedef struct {
+  int rank;
+  Py_ssize_t offset;
+  BpMapAxis axes[PyBUF_MAX_NDIM];
+} BpMapCursor;
+
 typedef struct {
   BpRuntime* runtime;
   PyObject** objects;
@@ -86,7 +97,8 @@ typedef struct {
   BpBlasCache* blas;
   void* blas_functions[4];
 #endif
-  Term continuation, argument, function, map_step;
+  Term continuation, argument, function, map_step, map_function;
+  BpMapCursor map_cursor;
   size_t map_view, map_remaining;
   Term fields[5];
   u32 effect;
@@ -442,6 +454,13 @@ static void bp_decode(Env e, BpCall* call) {
 #if defined(CID(f32_size)) || defined(CID(f32_shape)) || defined(CID(f32_read)) || defined(CID(f32_write)) || defined(CID(f32_release)) || defined(CID(f32_map))
       f[0] = bp_unbox_as(e, f[0], CID(F32View)); break;
 #endif
+#ifdef CID(f32_map_closed)
+    case CID(f32_map_closed):
+      f[0] = bp_unbox_as(e, f[0], CID(F32View));
+      if (term_tag(f[1]) != TAG_CLO || term_loc(f[1]) != 0)
+        bendpy_panic("closed float32 maps require a captureless function; use a template");
+      break;
+#endif
 #ifdef CID(f32_modify)
     case CID(f32_modify):
       f[0] = bp_unbox_as(e, f[0], CID(F32View));
@@ -481,7 +500,7 @@ static BpView* bp_view(BpCall* call, u64 handle) {
   return &call->views[index];
 }
 
-// Only checked indexed effects and the count-bounded map cursor call this.
+// Checked indexed effects retain the random-access decoder.
 static char* bp_view_address(BpView* view, u64 index) {
   if (view->contiguous) return (char*)view->buffer.buf + index * sizeof(float);
   Py_ssize_t offset = 0;
@@ -513,6 +532,67 @@ static void bp_store(char* address, u32 bits) {
   memcpy(address, &bits, sizeof(bits));
 }
 
+#if defined(CID(f32_map)) || defined(CID(f32_map_closed))
+// Normalize singleton axes once. Contiguous arrays need only one stride; a
+// scalar or empty array never advances. Borrowing already checked all spans.
+static void bp_map_cursor_start(BpCall* call, BpView* view) {
+  BpMapCursor* cursor = &call->map_cursor;
+  cursor->rank = 0;
+  cursor->offset = 0;
+  if (view->size <= 1) return;
+  if (view->contiguous) {
+    cursor->axes[cursor->rank++] = (BpMapAxis){ .dimension = view->size,
+      .stride = sizeof(float), .rewind = (Py_ssize_t)(view->size - 1) * (Py_ssize_t)sizeof(float) };
+    return;
+  }
+  for (int axis = 0; axis < view->buffer.ndim; ++axis) {
+    size_t dimension = (size_t)view->buffer.shape[axis];
+    if (dimension <= 1) continue;
+    Py_ssize_t stride = view->buffer.strides[axis];
+    cursor->axes[cursor->rank++] = (BpMapAxis){ .dimension = dimension,
+      .stride = stride, .rewind = (Py_ssize_t)(dimension - 1) * stride };
+  }
+}
+
+static void bp_map_cursor_advance(BpMapCursor* cursor) {
+  for (int at = cursor->rank; at-- > 0;) {
+    BpMapAxis* axis = &cursor->axes[at];
+    if (++axis->coordinate < axis->dimension) {
+      cursor->offset += axis->stride;
+      return;
+    }
+    axis->coordinate = 0;
+    cursor->offset -= axis->rewind;
+  }
+}
+
+static char* bp_map_address(BpCall* call) {
+  return (char*)call->views[call->map_view].buffer.buf + call->map_cursor.offset;
+}
+
+static void bp_map_finish(BpCall* call) {
+  call->argument = term_pak(CID(F32View), bp_seal(call->key ^ 0x66333276696577ull, call->map_view));
+}
+#endif
+
+#ifdef CID(f32_map_closed)
+// A captureless closure owns no environment, so applying it consumes no state
+// and the same term can be reused without constructing a successor or tuple.
+static void bp_map_closed_next(Env e, BpCall* call) {
+  if (call->map_remaining == 0) {
+    call->map_function = 0;
+    bp_map_finish(call);
+    return;
+  }
+  char* address = bp_map_address(call);
+  u32 bits;
+  memcpy(&bits, address, sizeof(bits));
+  bits = (u32)bp_apply(e, call->map_function, (Term)bits);
+  bp_store(address, bits);
+  if (--call->map_remaining) bp_map_cursor_advance(&call->map_cursor);
+}
+#endif
+
 #ifdef CID(f32_map)
 static bool bp_map_valid(BpCall* call) {
   Term step = call->map_step;
@@ -532,11 +612,10 @@ static void bp_map_next(Env e, BpCall* call) {
   call->map_step = 0;
   if (call->map_remaining == 0) {
     term_drop(e, step);
-    call->argument = term_pak(CID(F32View), bp_seal(call->key ^ 0x66333276696577ull, call->map_view));
+    bp_map_finish(call);
     return;
   }
-  BpView* view = &call->views[call->map_view];
-  char* address = bp_view_address(view, view->size - call->map_remaining);
+  char* address = bp_map_address(call);
   u32 bits;
   memcpy(&bits, address, sizeof(bits));
   Term result = bp_apply(e, step, (Term)bits);
@@ -553,6 +632,7 @@ static void bp_map_next(Env e, BpCall* call) {
   // Validate the successor before committing this cell, including at count 0.
   if (!bp_map_valid(call)) return;
   bp_store(address, (u32)fields[0]);
+  if (call->map_remaining) bp_map_cursor_advance(&call->map_cursor);
 }
 #endif
 
@@ -573,10 +653,13 @@ static bool bp_memory_effect(Env e, BpCall* call) {
 #ifdef CID(f32_modify)
     case CID(f32_modify):
 #endif
+#ifdef CID(f32_map_closed)
+    case CID(f32_map_closed):
+#endif
 #ifdef CID(f32_map)
     case CID(f32_map):
 #endif
-#if defined(CID(f32_size)) || defined(CID(f32_shape)) || defined(CID(f32_read)) || defined(CID(f32_write)) || defined(CID(f32_modify)) || defined(CID(f32_map))
+#if defined(CID(f32_size)) || defined(CID(f32_shape)) || defined(CID(f32_read)) || defined(CID(f32_write)) || defined(CID(f32_modify)) || defined(CID(f32_map)) || defined(CID(f32_map_closed))
     {
 #ifdef CID(f32_map)
       if (call->effect == CID(f32_map)) {
@@ -584,8 +667,23 @@ static bool bp_memory_effect(Env e, BpCall* call) {
         call->argument = 0;
       }
 #endif
+#ifdef CID(f32_map_closed)
+      if (call->effect == CID(f32_map_closed)) {
+        call->map_function = call->fields[1];
+        call->argument = 0;
+      }
+#endif
       BpView* view = bp_view(call, call->fields[0]);
       if (!view) return true;
+#ifdef CID(f32_map_closed)
+      if (call->effect == CID(f32_map_closed)) {
+        if (!bp_writable(call, view)) return true;
+        call->map_view = (size_t)(view - call->views);
+        call->map_remaining = view->size;
+        bp_map_cursor_start(call, view);
+        return true;
+      }
+#endif
       Term handle = term_pak(CID(F32View), (u32)call->fields[0]);
 #ifdef CID(f32_map)
       if (call->effect == CID(f32_map)) {
@@ -597,6 +695,7 @@ static bool bp_memory_effect(Env e, BpCall* call) {
         }
         call->map_view = (size_t)(view - call->views);
         call->map_remaining = view->size;
+        bp_map_cursor_start(call, view);
         Term producer = call->map_step;
         call->map_step = 0;
         call->map_step = bp_apply(e, producer, (Term)view->size);
@@ -677,6 +776,11 @@ static bool bp_native(BpCall* call, BpOperation operation) {
         call->native_more = false;
         // Check signals between batches without attaching for every element.
         for (size_t operations = 0;; ++operations) {
+#ifdef CID(f32_map_closed)
+          if (call->map_function) {
+            bp_map_closed_next(e, call);
+          } else
+#endif
 #ifdef CID(f32_map)
           if (call->map_step) {
             bp_map_next(e, call);
@@ -712,6 +816,7 @@ static bool bp_native(BpCall* call, BpOperation operation) {
         break;
       }
       case BP_DROP:
+        if (call->map_function) { term_drop(e, call->map_function); call->map_function = 0; }
         if (call->map_step) { term_drop(e, call->map_step); call->map_step = 0; }
         if (call->native_more) {
           term_drop(e, call->argument); call->native_more = false;

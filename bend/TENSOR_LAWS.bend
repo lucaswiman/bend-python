@@ -109,3 +109,28 @@ law map_elements:
   for f: F32 -> F32
   for memory: List<F32>
   {State.apply_steps(List.length(&1, F32, memory), memory, Tensor.map_steps(~f, List.length(&1, F32, memory))) == List.map(~F32, ~F32, ~f, memory) : List<F32>}
+
+# Pure mixed-radix axis model: remaining counts positions after this cell.
+law axis_step:
+  for coordinate: Nat
+  for remaining: Nat
+  {State.advance_axis(coordinate, 1n+remaining) == (False{}, (1n+coordinate, remaining)) : Pair(Bool, Pair(Nat, Nat))}
+
+law axis_carry:
+  for coordinate: Nat
+  {State.advance_axis(coordinate, 0n) == (True{}, (0n, coordinate)) : Pair(Bool, Pair(Nat, Nat))}
+
+law closed_map_elements:
+  for f: F32 -> F32
+  for memory: List<F32>
+  {State.apply_closed(~f, memory) == List.map(~F32, ~F32, ~f, memory) : List<F32>}
+
+law closed_map_matches_steps:
+  for f: F32 -> F32
+  for memory: List<F32>
+  {State.apply_closed(~f, memory) == State.apply_steps(List.length(&1, F32, memory), memory, Tensor.map_steps(~f, List.length(&1, F32, memory))) : List<F32>}
+
+law axis_extent_conserved:
+  for coordinate: Nat
+  for remaining: Nat
+  {State.axis_extent_after(State.advance_axis(coordinate, remaining)) == Nat.add(coordinate, remaining) : Nat}

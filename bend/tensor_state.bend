@@ -65,3 +65,25 @@ def apply_steps(count: Nat, memory: List<F32>, steps: Python.F32MapSteps(count))
       []
     case 1n+pred head <> tail:
       cons_step(pred, steps(head), next => apply_steps(pred, tail, next))
+
+# One axis of a mixed-radix cursor. Carry resets the coordinate and restores
+# its remaining extent; native signed byte strides are outside this model.
+def advance_axis(coordinate: Nat, remaining: Nat) -> Pair(Bool, Pair(Nat, Nat)):
+  match remaining:
+    case 0n:
+      (True{}, (0n, coordinate))
+    case 1n+pred:
+      (False{}, (1n+coordinate, pred))
+
+# Closed-function semantics without per-cell successor closures or tuples.
+def apply_closed(~f: F32 -> F32, memory: List<F32>) -> List<F32>:
+  match memory:
+    case []:
+      []
+    case head <> tail:
+      f(head) <> apply_closed(~f, tail)
+
+def axis_extent_after(result: Pair(Bool, Pair(Nat, Nat))) -> Nat:
+  (carry, axis) = result
+  (coordinate, remaining) = axis
+  Nat.add(coordinate, remaining)

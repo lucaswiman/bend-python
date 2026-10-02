@@ -209,6 +209,7 @@ reject writes and maps through a read-only view:
 | `Python.f32_modify(view, index, function)` | Load, apply a captureless Bend function, store |
 | `Tensor.map_inplace(~function, view)` | Map a closed template over a `F32View<True{}>` and return it |
 | `Python.f32_map(view, producer)` | Consume a dependent program for the actual buffer length |
+| `Python.f32_map_closed(view, function)` | Map a captureless scalar callback without step tuples |
 | `Python.f32_release(writable, view)` | Release the borrow |
 
 The `writable` arguments above are erased; they do not enter the native ABI.
@@ -218,13 +219,15 @@ For maps, the native driver supplies the retained buffer's actual length to a
 producer of type `@count: Nat -> Python.F32MapSteps(count)`. At zero the program
 is `Unit`; each successor is an affine `F32 -> Pair(F32, F32MapSteps(pred))`
 that produces one updated value and the next step. A safely typed producer
-cannot return too few or too many steps. `Tensor.map_inplace` builds this
-program lazily, with constant live traversal state. Each step is consumed once,
-so custom producers can use captured state without reusable closure checks.
-The driver validates the writable borrow once and derives each address from
-`length - remaining`, removing repeated seal, permission and index checks.
-General indexed operations retain their checks, as do the native program's
-constructor and callable representation checks.
+cannot return too few or too many steps. Each step is consumed once, so custom
+producers can use captured state. `Tensor.map_inplace` specializes its closed
+template to `Python.f32_map_closed`, which validates a captureless callback once
+and applies it directly without creating per-cell successor closures or tuples.
+Both drivers validate the writable borrow once and use an incremental stride
+cursor in logical row-major order. Singleton axes are removed from traversal
+metadata; indexed operations retain their random-access decoder and checks.
+The dependent driver retains its constructor and successor checks, including
+validation before each cell is written.
 
 Every borrow is also released automatically when its invocation ends, including
 exceptions and cancellation. The exporter stays alive throughout the borrow;
@@ -236,9 +239,10 @@ pins a buffer export, but does not lock all aliases. Native memory effects run w
 Python calls between elements and check signals between batches of at most
 4096 native operations; callback work determines the time between checks;
 interruption leaves completed writes in place. No array-sized temporary is
-allocated. Strided access takes work proportional to rank per element, and
-Bend's per-element driver can be substantially slower than NumPy/PyTorch
-vectorized kernels; benchmark your actual algorithm.
+allocated. Map traversal uses O(rank) metadata, adds strides between cells, and
+carries across axes without per-cell division. Random indexed access still
+takes work proportional to rank. Bend's scalar callbacks can be slower than
+NumPy/PyTorch vectorized kernels; benchmark your actual algorithm.
 
 ## Optional bulk BLAS
 
@@ -320,8 +324,9 @@ The build refuses to compile unless every law checks:
   read-after-write, preservation of other cells, bounds and permission checks,
   and release rules. The dependent map program has exactly the requested step
   count; a pure interpreter of the canonical program produces the same values
-  as `List.map`. Cursor laws establish conservation, in-bounds access,
-  advancement and decreasing remaining work. These are proofs of the Bend
+  as `List.map`. The closed-function model agrees with both. Cursor laws
+  establish conservation, in-bounds access, advancement and decreasing remaining
+  work; a mixed-radix axis model proves step, carry and extent conservation. These are proofs of the Bend
   program and arithmetic model, not the C traversal
   ([`bend/TENSOR_LAWS.bend`](https://github.com/lucaswiman/bend-python/blob/main/bend/TENSOR_LAWS.bend)).
 - **BLAS dimensions.** Exact vector/matrix ranks, acceptance of matching shapes,

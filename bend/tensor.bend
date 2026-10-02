@@ -78,7 +78,7 @@ def map_steps(~f: F32 -> F32, count: Nat) -> Python.F32MapSteps(count):
       value => (f(value), map_steps(~f, pred))
 
 def map_inplace(~f: F32 -> F32, view: Python.F32View<True{}>) -> IO(Python.F32View<True{}>):
-  Python.f32_map(view, count => map_steps(~f, count))
+  Python.f32_map_closed(view, value => f(value))
 
 def map_object(~borrow: Python.Object -> IO(Python.F32View<True{}>), ~f: F32 -> F32, +value: Python.Object) -> IO(Python.Object):
   do IO<Python.Object>:

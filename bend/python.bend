@@ -256,6 +256,11 @@ def F32MapSteps(count: Nat) -> Type:
 def f32_map(view: F32View<True{}>, producer: @count: Nat -> F32MapSteps(count)) -> IO(F32View<True{}>):
   import "./python.c"
 
+# Reusable closed scalar callback; the native boundary rejects captured closures.
+# Tensor.map_inplace specializes templates to this storage-count-bounded effect.
+def f32_map_closed(view: F32View<True{}>, function: F32 -> F32) -> IO(F32View<True{}>):
+  import "./python.c"
+
 # Optional LP64 SciPy BLAS. Positive aligned vectors and Fortran matrices;
 # no implicit copies. Return every affine lease so the caller can release it.
 def blas_scale(view: F32View<True{}>, alpha: F32) -> IO(F32View<True{}>):

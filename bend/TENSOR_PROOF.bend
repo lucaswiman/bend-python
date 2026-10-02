@@ -206,3 +206,31 @@ def Laws.map_elements(f, memory):
       {==}
     case head <> tail:
       Equal.cong(List<F32>, List<F32>, values => f(head) <> values, State.apply_steps(List.length(&1, F32, tail), tail, Tensor.map_steps(~f, List.length(&1, F32, tail))), List.map(~F32, ~F32, ~f, tail), Laws.map_elements(f, tail))
+
+
+def Laws.axis_step(coordinate, remaining):
+  {==}
+
+def Laws.axis_carry(coordinate):
+  {==}
+
+def Laws.closed_map_elements(f, memory):
+  match memory:
+    case []:
+      {==}
+    case head <> tail:
+      Equal.cong(List<F32>, List<F32>, values => f(head) <> values, State.apply_closed(~f, tail), List.map(~F32, ~F32, ~f, tail), Laws.closed_map_elements(f, tail))
+
+def Laws.closed_map_matches_steps(f, memory):
+  match memory:
+    case []:
+      {==}
+    case head <> tail:
+      Equal.cong(List<F32>, List<F32>, values => f(head) <> values, State.apply_closed(~f, tail), State.apply_steps(List.length(&1, F32, tail), tail, Tensor.map_steps(~f, List.length(&1, F32, tail))), Laws.closed_map_matches_steps(f, tail))
+
+def Laws.axis_extent_conserved(coordinate, remaining):
+  match remaining:
+    case 0n:
+      Equal.sym(Nat, Nat.add(coordinate, 0n), coordinate, add_zero(coordinate))
+    case 1n+pred:
+      Equal.sym(Nat, Nat.add(coordinate, 1n+pred), 1n+Nat.add(coordinate, pred), add_succ(coordinate, pred))

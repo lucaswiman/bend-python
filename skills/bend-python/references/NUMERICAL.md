@@ -64,7 +64,11 @@ return an updated view. Consume returned pairs in helper definitions, since a
 releases outstanding exports after exceptions.
 
 `Tensor.map_inplace(~function, view)` maps a closed template and returns the
-writable view. For captured state, `Python.f32_map` consumes an affine producer
+writable view. It specializes to `Python.f32_map_closed`, whose native driver
+validates a captureless scalar callback once and avoids per-element successor
+closures and tuples. Both map drivers use an incremental stride/carry cursor
+with O(rank) metadata, skipping singleton axes and preserving logical row-major
+order. For captured state, `Python.f32_map` consumes an affine producer
 `@count: Nat -> Python.F32MapSteps(count)`. Its count comes from retained
 storage, never a caller-supplied length. A zero-length program is `Unit`; each
 successor is a closure consuming one F32 and returning its replacement and the
@@ -191,7 +195,9 @@ satisfy only vacuous success laws. Mutation-check each law with type-correct
 changes; omit each dimension guard separately.
 
 The SDK's tensor laws cover a pure storage/lease model, canonical map
-semantics, exact dependent step counts, and cursor bounds/conservation.
+semantics, equivalence of closed and canonical dependent map models, exact
+dependent step counts, cursor bounds/conservation, and mixed-radix axis carry.
+These pure models do not prove native stride arithmetic or C correspondence.
 BLAS laws cover logical rank/dimension policy. Neither proves C correspondence,
 buffer metadata, pointer arithmetic, capsule ABI, refcounts, or native BLAS
 arithmetic. F32 rounding, NaNs, infinities, and reduction order prevent general
