@@ -353,7 +353,7 @@ assert stats()[0:2] == (2, 0), stats()
 """,
         )
 
-    def test_native_cache_reuses_healthy_and_reentrant_leases(self):
+    def test_native_cache_reuses_leases_and_discards_large_heap(self):
         directory, result = self.build(native_cache_probe=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.run_python(
@@ -384,27 +384,22 @@ assert stats()[0:2] == (2, 0), stats()
 assert stats()[3] == 0, stats()
 assert module.call(nested) == 144
 assert stats()[0:2] == (2, 0), stats()
-""",
-        )
 
-    def test_native_cache_discards_large_dynamic_heap(self):
-        directory, result = self.build(native_cache_probe=True)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.run_python(
-            directory,
-            CACHE_SETUP
-            + """
-assert stats()[0:2] == (1, 0), stats()
 # The byte-to-list conversion allocates several words per byte in the actual
 # Bend heap. Keeping the list alive forces a high-water mark above 32 MiB.
 data = bytes(range(256)) * 8192
 assert module.reversed_bytes(data) == data[::-1]
-assert stats()[0:2] == (1, 1), stats()
+assert stats()[0:2] == (2, 1), stats()
 assert stats()[4:6] == (0, 1), stats()
 assert module.square(12) == 144
 assert stats()[0:2] == (2, 1), stats()
-assert module.square(13) == 169
-assert stats()[0:2] == (2, 1), stats()
+# Nesting needs a second lease again: replace the evicted context, then reuse
+# both healthy contexts on the next nested call.
+assert module.call(nested) == 144
+assert stats()[0:2] == (3, 1), stats()
+assert module.call(nested) == 144
+assert stats()[0:2] == (3, 1), stats()
+assert stats()[3:6] == (0, 0, 1), stats()
 """,
         )
 
