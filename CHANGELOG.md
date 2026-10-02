@@ -14,7 +14,8 @@ when its version has a section below.
   Python interface and its guarantees, Bend 2's checker rules with fixes, and
   writing and proving laws, including agreeing on law statements with the user.
   It includes a project scaffold, a first-error filter and a definition
-  reorderer.
+  reorderer. The numerical-libraries reference covers borrowed arrays, optional
+  native kernels, layouts, packaging, and proof boundaries.
 - Zero-copy CPU float32 borrows for NumPy arrays, PyTorch tensors and Python
   buffer exporters; affine, sealed views with shape, indexed read/write and
   in-place Bend mapping. Supports strided layouts without allocating element

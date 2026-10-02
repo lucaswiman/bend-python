@@ -26,6 +26,7 @@ Everything you need is local; you should not need the web:
 - [references/LANGUAGE.md](references/LANGUAGE.md): Bend 2 syntax and the checker errors you will hit, with fixes.
 - [references/PROOFS.md](references/PROOFS.md): writing laws and proofs, and writing code that can be proved.
 - [references/PYTHON.md](references/PYTHON.md): the bend-python API, the build, data exchange, threads, and what is guaranteed.
+- [references/NUMERICAL.md](references/NUMERICAL.md): read when using NumPy, PyTorch, or numerical kernels; borrowed storage, optional BLAS, layouts, and proof boundaries.
 
 ## Setup
 
@@ -64,7 +65,9 @@ Put logic in Bend and keep Python a thin wrapper: every recursion or tree walk
 in Python is both slow and outside what can be proved. Python converts
 arguments, picks classes and raises exceptions; Bend computes. For structured
 data, pass `bytes` in an encoding you define (see PYTHON.md) rather than
-walking Python objects with many FFI calls.
+walking Python objects with many FFI calls. For large numerical arrays, use
+borrowed storage or existing bulk kernels; see NUMERICAL.md before choosing a
+representation or adding a native backend.
 
 ### 2. State the contract before implementing and proving it
 

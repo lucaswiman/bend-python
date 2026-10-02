@@ -106,6 +106,10 @@ Python sees each export as a module-level function of the extension
 
 ## 3. Exchanging data with Python
 
+For NumPy/PyTorch storage, custom F32 maps, or bulk numerical kernels, read
+[NUMERICAL.md](NUMERICAL.md). Its borrow and layout contracts avoid copying
+enormous arrays into the ordinary bytes/list interchange path below.
+
 - `Python.Object` handles preserve identity and precision but each operation is
   an FFI call, and handles are valid only during the call that produced them:
   never store one for a later call.
@@ -141,7 +145,8 @@ Python sees each export as a module-level function of the extension
   extension concurrently and callbacks may reenter it.
 - `release_gil = True{}` detaches during pure Bend evaluation; the bridge
   reattaches for every Python operation. Free-threaded 3.14t always detaches.
-- Each call uses one core; Bend's parallel scheduler and GPU are not used.
+- Each Bend evaluator uses one worker; Bend's parallel scheduler and GPU are
+  not used. Invoked numerical libraries can use their own native thread pools.
 
 ## 5. Guarantees, trust and limits
 
