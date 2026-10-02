@@ -162,6 +162,10 @@ def long_steps(count: Nat) -> Python.F32MapSteps(count):
   %lie(1n, count) : Python.F32MapSteps(_)
   value => (value, Unit{})
 
+def two_steps(count: Nat) -> Python.F32MapSteps(count):
+  %lie(2n, count) : Python.F32MapSteps(_)
+  first => ((first + 10.0 : F32), second => ((second + 20.0 : F32), Unit{}))
+
 def update(~operation: Python.F32View<True{}> -> IO(Python.F32View<True{}>),
   request: Python.Call) -> IO(Python.Object):
   do IO<Python.Object>:
@@ -213,6 +217,8 @@ def main() -> IO(Unit):
       update(~(view => Python.f32_map(view, count => short_steps(count)))), True{})
     Python.export("long_map",
       update(~(view => Python.f32_map(view, count => long_steps(count)))), True{})
+    Python.export("two_map",
+      update(~(view => Python.f32_map(view, count => two_steps(count)))), True{})
     Python.export("abort", with_view(~abort), True{})
     Python.export("reentrant", reentrant, True{})
     Tensor.export_numpy_f32_inplace(~(x => (x / 2.0 : F32)), "half_inplace", True{})
@@ -371,15 +377,24 @@ __attribute__((visibility("default"))) void bp_test_interrupt_after_store(void) 
         with self.assertRaises(IndexError):
             self.fixture.write_first(array.array("f"))
 
-    def test_native_map_rejects_unsafe_inexact_plans_without_writes(self):
-        for operation, elements in (("short_map", [2, 4, 8]), ("long_map", [])):
-            with self.subTest(operation=operation):
+    def test_native_map_rejects_unsafe_plans_before_current_cell_write(self):
+        for operation, elements, expected in (
+            ("short_map", [2, 4, 8], [2, 4, 8]),
+            ("long_map", [], []),
+            ("two_map", [], []),
+            ("two_map", [2], [2]),
+            ("two_map", [2, 4, 8], [12, 4, 8]),
+        ):
+            with self.subTest(operation=operation, count=len(elements)):
                 value = array.array("f", elements)
                 with self.assertRaisesRegex(RuntimeError, "invalid.*map"):
                     getattr(self.fixture, operation)(value)
-                self.assertEqual(list(value), elements)
+                self.assertEqual(list(value), expected)
                 value.append(16)
                 self.assertEqual(self.fixture.last(value), 16)
+        value = array.array("f", [2, 4])
+        self.assertIs(self.fixture.two_map(value), value)
+        self.assertEqual(list(value), [12, 24])
 
     def test_dependent_map_uses_real_count_and_consumes_captured_steps_in_order(self):
         for count in (0, 1, 4095, 4096, 4097):

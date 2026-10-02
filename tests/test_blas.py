@@ -75,6 +75,7 @@ class BlasBufferTests(unittest.TestCase):
             import array
             from concurrent.futures import ThreadPoolExecutor
             import gc
+            import importlib.util
             import sys
             import threading
             import types
@@ -123,6 +124,11 @@ class BlasBufferTests(unittest.TestCase):
             assert b.blas_scale(-1.0, x) is x
             assert list(x) == [-8, 12]
             assert b.blas_dot(x, x) == 208
+            if importlib.util.find_spec('torch') is not None:
+                import torch
+                tensor = torch.tensor([3, -5], dtype=torch.float32)
+                assert b.torch_blas_scale(2.0, tensor) is tensor
+                assert tensor.tolist() == [6, -10]
             try:
                 b.blas_axpy(2.0, x, array.array('f', [5, 7]))
             except KeyError:

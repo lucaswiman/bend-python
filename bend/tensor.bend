@@ -13,16 +13,13 @@ def require(allowed: Bool, message: String) -> IO(Unit):
     case False{}:
       Python.type_error(Unit, message)
 
-def identical(left: Python.Object, right: Python.Object) -> IO(Bool):
-  Python.identical(left, right)
-
 # Tensor subclasses can override numpy() to return a copy. Restrict this
 # adapter to ordinary tensors, whose default conversion guarantees sharing.
 def require_tensor(value: Python.Object, torch: Python.Object) -> IO(Unit):
   do IO<Unit>:
     kind : Python.Object <- Python.construct("type", [value])
     tensor : Python.Object <- Python.getattr(torch, "Tensor")
-    ordinary : Bool <- identical(kind, tensor)
+    ordinary : Bool <- Python.identical(kind, tensor)
     require(ordinary, "expected an ordinary torch.Tensor; subclasses are unsupported")
 
 # Forward AD tangents must never be discarded by numpy().
@@ -32,7 +29,7 @@ def check_forward_ad(value: Python.Object, dual: Python.Object) -> IO(Unit):
     parts : Python.Object <- Python.invoke(unpack, [value])
     tangent : Python.Object <- Python.getattr(parts, "tangent")
     absent : Python.Object <- Python.none()
-    plain : Bool <- identical(tangent, absent)
+    plain : Bool <- Python.identical(tangent, absent)
     require(plain, "forward AD tensors cannot be borrowed")
 
 # Notify PyTorch before granting write access, so partial failures also

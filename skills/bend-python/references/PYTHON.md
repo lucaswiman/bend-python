@@ -96,7 +96,8 @@ def main() -> IO(Unit):
 | `truthy(o)` | `bool(o)` |
 | `get_item` `set_item` `getattr(o, "name")` `len(o) -> IO(Nat)` | Python operations; Python exceptions propagate |
 | `tuple(list)` `list(list)` `dict(pairs)` `empty_dict()` `none()` | Build Python objects |
-| `call(f, args_tuple, kwargs)`, `invoke(f, [args])` | Call Python (callbacks may reenter the extension) |
+| `call(f, args_tuple, kwargs)`, `invoke(f, [args])` | Call Python; `invoke` uses positional vectorcall without intermediate Python containers |
+| `identical(left, right)` | Python object identity, without calling equality or truthiness |
 | `builtins("int")`, `construct("int", [args])`, `import_module("math")` | Look up builtins and modules |
 | `type_error(T, "message")` | Raise `TypeError` (the only exception constructor; for others, call Python) |
 | `arity`, `argument`, `singleton`, `pair` | Pure helpers on argument lists |

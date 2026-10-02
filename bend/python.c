@@ -895,9 +895,9 @@ static int bp_blas_traverse(PyObject* self, visitproc visit, void* arg) {
 static int bp_blas_clear(PyObject* self) {
   BpBlasCache* cache = (BpBlasCache*)self;
   memset(cache->functions, 0, sizeof(cache->functions));
-  for (int i = 0; i < 4; ++i) {
-    Py_CLEAR(cache->modules[i]); Py_CLEAR(cache->capsules[i]);
-  }
+  // Capsule destruction can use supplier-owned native state.
+  for (int i = 0; i < 4; ++i) Py_CLEAR(cache->capsules[i]);
+  for (int i = 0; i < 4; ++i) Py_CLEAR(cache->modules[i]);
   return 0;
 }
 

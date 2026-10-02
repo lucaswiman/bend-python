@@ -145,7 +145,8 @@ Python. For other mutable buffer exporters, including memoryviews of mutable
 storage, callers must prevent concurrent writes while conversion runs.
 Wrong types raise `TypeError`, out-of-range values `OverflowError`, and wrong
 arity or unexpected keywords in typed exports `TypeError`. Python exceptions
-raised inside a call propagate unchanged.
+raised inside a call propagate unchanged. `invoke` passes positional arguments
+through vectorcall without constructing an intermediate tuple or keyword dict.
 
 Handles are valid only during the call that created them. The bridge seals each
 handle with a per-call key and rejects invalid decoded handles with `ValueError`.
@@ -327,8 +328,8 @@ The build refuses to compile unless every law checks:
   count; a pure interpreter of the canonical program produces the same values
   as `List.map`. The closed-function model agrees with both. Cursor laws
   establish conservation, in-bounds access, advancement and decreasing remaining
-  work; a mixed-radix axis model proves step, carry and extent conservation. These are proofs of the Bend
-  program and arithmetic model, not the C traversal
+  work; a mixed-radix axis model proves step, carry and extent conservation.
+  These are proofs of the Bend program and arithmetic model, not the C traversal
   ([`bend/TENSOR_LAWS.bend`](https://github.com/lucaswiman/bend-python/blob/main/bend/TENSOR_LAWS.bend)).
 - **BLAS dimensions.** Exact vector/matrix ranks, acceptance of matching shapes,
   equal vector lengths, and all three matrix-product dimension equations
