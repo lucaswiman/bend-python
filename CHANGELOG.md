@@ -33,6 +33,10 @@ when its version has a section below.
   incremental strided traversal with constant storage per axis.
 - Positional Python calls use vectorcall, and native object identity avoids
   Python callback setup. BLAS exports share lazily validated capsule bindings.
+- BLAS acceptance laws now prove equal vector lengths and all three matrix
+  dimension equations as `Nat` equalities, with independent laws for the inner
+  dimension, output rows, and output columns. These contracts cover the logical
+  Bend shape policy.
 
 ### Fixed
 
