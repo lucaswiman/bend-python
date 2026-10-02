@@ -372,8 +372,11 @@ static void bp_decode(Env e, BpCall* call) {
       f[0] = bp_unbox(e, f[0]); break;
 #ifdef CID(get_item)
     case CID(get_item):
-      f[0] = bp_unbox(e, f[0]); f[1] = bp_unbox(e, f[1]); break;
 #endif
+#ifdef CID(identical)
+    case CID(identical):
+#endif
+      f[0] = bp_unbox(e, f[0]); f[1] = bp_unbox(e, f[1]); break;
 #ifdef CID(set_item)
     case CID(set_item):
 #endif
@@ -384,6 +387,10 @@ static void bp_decode(Env e, BpCall* call) {
 #ifdef CID(getattr)
     case CID(getattr):
       f[0] = bp_unbox(e, f[0]); bp_read_list(e, f[1], call, BP_READ_TEXT); break;
+#endif
+#ifdef CID(invoke)
+    case CID(invoke):
+      f[0] = bp_unbox(e, f[0]); bp_read_list(e, f[1], call, BP_READ_OBJECTS); break;
 #endif
 #ifdef CID(builtins)
     case CID(builtins):
@@ -1375,6 +1382,32 @@ static bool bp_effect(BpCall* call) {
         PyErr_SetString(PyExc_TypeError, "call requires a tuple of arguments and a dict of keywords"); return false;
       }
       return bp_add(call, PyObject_Call(a, b, c));
+#endif
+#ifdef CID(invoke)
+    case CID(invoke): {
+      a = bp_get(call, f[0]); if (!a) return false;
+      if (call->length > PY_SSIZE_T_MAX / sizeof(PyObject*)) {
+        PyErr_NoMemory(); return false;
+      }
+      PyObject* local[8];
+      PyObject** args = call->length <= 8 ? local : PyMem_Malloc(call->length * sizeof(PyObject*));
+      if (!args) { PyErr_NoMemory(); return false; }
+      size_t i = 0;
+      for (; i < call->length; ++i) {
+        args[i] = bp_get(call, call->buffer[i]);
+        if (!args[i]) break;
+      }
+      // The arena owns these references throughout callback reentry. The vector
+      // borrows them and never points into the arena's reallocatable array.
+      result = i == call->length ? PyObject_Vectorcall(a, args, call->length, NULL) : NULL;
+      if (args != local) PyMem_Free(args);
+      return bp_add(call, result);
+    }
+#endif
+#ifdef CID(identical)
+    case CID(identical):
+      a = bp_get(call, f[0]); b = bp_get(call, f[1]); if (!a || !b) return false;
+      call->result_kind = BP_BOOL; call->result = a == b; return true;
 #endif
 #ifdef CID(builtins)
     case CID(builtins):

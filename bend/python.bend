@@ -52,6 +52,14 @@ def getattr(value: Object, name: String) -> IO(Object):
 def call(function: Object, args: Object, kwargs: Object) -> IO(Object):
   import "./python.c"
 
+# Positional-only calls preserve argument identity without creating containers.
+def invoke(function: Object, args: List<Object>) -> IO(Object):
+  import "./python.c"
+
+# Python's `is`, without invoking equality or truthiness methods.
+def identical(left: Object, right: Object) -> IO(Bool):
+  import "./python.c"
+
 def builtins(name: String) -> IO(Object):
   import "./python.c"
 
@@ -95,12 +103,6 @@ def import_module(name: String) -> IO(Object):
   import "./python.c"
 
 # Common Python operations are assembled here from the small effect boundary.
-def invoke(function: Object, args: List<Object>) -> IO(Object):
-  do IO<Object>:
-    positional : Object <- tuple(args)
-    keywords : Object <- empty_dict()
-    call(function, positional, keywords)
-
 def construct(name: String, args: List<Object>) -> IO(Object):
   do IO<Object>:
     function : Object <- builtins(name)

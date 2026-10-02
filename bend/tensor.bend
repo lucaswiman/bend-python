@@ -14,11 +14,7 @@ def require(allowed: Bool, message: String) -> IO(Unit):
       Python.type_error(Unit, message)
 
 def identical(left: Python.Object, right: Python.Object) -> IO(Bool):
-  do IO<Bool>:
-    operator : Python.Object <- Python.import_module("operator")
-    same : Python.Object <- Python.getattr(operator, "is_")
-    result : Python.Object <- Python.invoke(same, [left, right])
-    Python.to_bool(result)
+  Python.identical(left, right)
 
 # Tensor subclasses can override numpy() to return a copy. Restrict this
 # adapter to ordinary tensors, whose default conversion guarantees sharing.

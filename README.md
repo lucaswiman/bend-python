@@ -131,6 +131,7 @@ def echo(request: Python.Call) -> IO(Python.Object):
 | `get_item` `set_item` `getattr` `len` | The Python operations, raising Python's exceptions |
 | `tuple` `list` `dict` `empty_dict` `none` | Build Python objects |
 | `call(f, args, kwargs)`, `invoke(f, arguments)` | Call Python, including callbacks that reenter Bend |
+| `identical(left, right)` | Python object identity (`left is right`), without equality or truthiness |
 | `builtins(name)`, `construct(name, arguments)` | Look up or call a builtin such as `"int"` or `"dict"` |
 | `import_module(name)` | Import a module, such as `"operator"` |
 

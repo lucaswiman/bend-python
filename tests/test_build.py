@@ -469,11 +469,39 @@ def copy(request: Python.Call) -> IO(Python.Object):
     case _:
       Python.type_error(Python.Object, "expected an argument")
 
+def invoke_forged_function(request: Python.Call) -> IO(Python.Object):
+  Python.invoke(Python.PyObject{0}, [])
+
+def invoke_forged_argument(request: Python.Call) -> IO(Python.Object):
+  do IO<Python.Object>:
+    +function : Python.Object <- Python.unary(request)
+    Python.invoke(function, [function, function, function, function, function,
+      function, function, function, Python.PyObject{0}])
+
+def identical(request: Python.Call) -> IO(Python.Object):
+  match request:
+    case Python.PyCall{[left, right], _}:
+      do IO<Python.Object>:
+        result : Bool <- Python.identical(left, right)
+        Python.from_bool(result)
+    case _:
+      Python.type_error(Python.Object, "expected two arguments")
+
+def identical_forged(request: Python.Call) -> IO(Python.Object):
+  do IO<Python.Object>:
+    value : Python.Object <- Python.unary(request)
+    result : Bool <- Python.identical(value, Python.PyObject{0})
+    Python.from_bool(result)
+
 def main() -> IO(Unit):
   do IO<Unit>:
     Python.export("forge_constant", forge_constant, False{})
     Python.export("forge_next", forge_next, False{})
     Python.export("copy", copy, False{})
+    Python.export("invoke_forged_function", invoke_forged_function, False{})
+    Python.export("invoke_forged_argument", invoke_forged_argument, False{})
+    Python.export("identical", identical, False{})
+    Python.export("identical_forged", identical_forged, False{})
 """,
             deterministic_handles=True,
         )
@@ -493,6 +521,25 @@ for _ in range(200):
             raise AssertionError(f"{function.__name__} accepted a forged handle")
 # Rebuilding a handle from its own sealed value is not forging.
 assert module.copy(values[0], values[1]) is values[0]
+for function in (
+    module.invoke_forged_function, module.invoke_forged_argument, module.identical_forged
+):
+    try:
+        function(lambda value: value)
+    except ValueError as error:
+        assert "invalid Python object handle" in str(error), error
+    else:
+        raise AssertionError(f"{function.__name__} accepted a forged handle")
+class NoEquality:
+    def __eq__(self, other):
+        raise AssertionError("identity must not invoke equality")
+    def __bool__(self):
+        raise AssertionError("identity must not invoke truthiness")
+left, right = NoEquality(), NoEquality()
+assert module.identical(left, left) is True
+assert module.identical(left, right) is False
+assert module.identical(None, None) is True
+assert module.identical([], []) is False
 """,
         )
 
