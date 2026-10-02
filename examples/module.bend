@@ -1,6 +1,7 @@
 import Base
 import ./bend/python.bend as Python
 import ./arithmetic.bend as Arithmetic
+import ./bend/tensor.bend as Tensor
 
 def echo(request: Python.Call) -> IO(Python.Object):
   Python.unary(request)
@@ -174,6 +175,9 @@ def make_bytes(request: Python.Call) -> IO(Python.Object):
 
 def main() -> IO(Unit):
   do IO<Unit>:
+    Tensor.export_numpy_f32_inplace(~Arithmetic.half, "numpy_half_inplace", True{})
+    Tensor.export_torch_f32_inplace(~Arithmetic.half, "torch_half_inplace", True{})
+    Tensor.export_numpy_f32_inplace(~(x => x), "numpy_identity_inplace", True{})
     Python.export_u32(~(x => Arithmetic.square(x)), "square", False{})
     Python.export_u32(~Arithmetic.increment, "increment", False{})
     Python.export_u32(~Arithmetic.identity, "identity", False{})

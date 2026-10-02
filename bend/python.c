@@ -49,15 +49,25 @@ typedef struct {
   PyObject* module;
 } BpFunction;
 
-typedef enum { BP_UNIT, BP_OBJECT, BP_U32, BP_F32, BP_BOOL, BP_STRING, BP_NAT, BP_BYTES } BpValue;
+typedef enum { BP_UNIT, BP_OBJECT, BP_U32, BP_F32, BP_BOOL, BP_STRING, BP_NAT, BP_BYTES, BP_F32_VIEW } BpValue;
 // A decoded Bend list: object handles, String codepoints, or raw U32 words.
 typedef enum { BP_READ_OBJECTS, BP_READ_TEXT, BP_READ_WORDS } BpRead;
 typedef enum { BP_INIT, BP_START, BP_RESUME, BP_DROP } BpOperation;
 
 typedef struct {
+  Py_buffer buffer;
+  size_t size;
+  bool live, writable, contiguous;
+} BpView;
+
+typedef struct {
   BpRuntime* runtime;
   PyObject** objects;
   size_t count, capacity, nargs;
+  BpView* views;
+  size_t view_count, view_capacity;
+  const char* view_error;
+  PyObject* view_exception;
   PyObject* module;
   Term continuation, argument, function;
   Term fields[5];
@@ -67,7 +77,7 @@ typedef struct {
   BpValue result_kind;
   u64 result;
   u64 key;
-  bool release_gil, pending, done;
+  bool release_gil, pending, done, native_more;
   char error[256];
 } BpCall;
 
@@ -167,13 +177,17 @@ static Term bp_apply(Env e, Term function, Term argument) {
 
 // Object wrappers may be packed or boxed on the heap. Anything else means the
 // private runtime representation changed, so fail loudly rather than guess.
-static u32 bp_unbox(Env e, Term object) {
-  if (term_aux(object) != CID(PyObject)) bendpy_panic("expected a Python object handle");
+static u32 bp_unbox_as(Env e, Term object, u32 constructor) {
+  if (term_aux(object) != constructor) bendpy_panic("unexpected bridge handle type");
   if (term_tag(object) == TAG_PAK) return (u32)term_loc(object);
   if (term_tag(object) != TAG_CTR) bendpy_panic("unexpected Python object representation");
   Term field;
   spare_free(e, 0, ctr_take(e, object, 1, &field));
   return (u32)field;
+}
+
+static u32 bp_unbox(Env e, Term object) {
+  return bp_unbox_as(e, object, CID(PyObject));
 }
 
 static void bp_read_list(Env e, Term list, BpCall* call, BpRead mode) {
@@ -250,6 +264,9 @@ static Term bp_pack(Env e, BpCall* call) {
   switch (call->result_kind) {
     case BP_UNIT: return term_pak(CID(Unit), 0);
     case BP_OBJECT: return bp_object(call, call->result);
+#ifdef CID(F32View)
+    case BP_F32_VIEW: return term_pak(CID(F32View), bp_seal(call->key ^ 0x66333276696577ull, (u32)call->result));
+#endif
     case BP_BOOL: return term_pak(call->result ? CID(True) : CID(False), 0);
     case BP_STRING:
     case BP_BYTES: {
@@ -360,7 +377,130 @@ static void bp_decode(Env e, BpCall* call) {
 #ifdef CID(empty_dict)
     case CID(empty_dict): break;
 #endif
+#ifdef CID(borrow_f32)
+    case CID(borrow_f32):
+      f[0] = bp_unbox(e, f[0]); f[1] = term_aux(f[1]) == CID(True); break;
+#endif
+#ifdef CID(f32_size)
+    case CID(f32_size):
+#endif
+#ifdef CID(f32_shape)
+    case CID(f32_shape):
+#endif
+#ifdef CID(f32_read)
+    case CID(f32_read):
+#endif
+#ifdef CID(f32_write)
+    case CID(f32_write):
+#endif
+#ifdef CID(f32_release)
+    case CID(f32_release):
+#endif
+#if defined(CID(f32_size)) || defined(CID(f32_shape)) || defined(CID(f32_read)) || defined(CID(f32_write)) || defined(CID(f32_release))
+      f[0] = bp_unbox_as(e, f[0], CID(F32View)); break;
+#endif
+#ifdef CID(f32_modify)
+    case CID(f32_modify):
+      f[0] = bp_unbox_as(e, f[0], CID(F32View));
+      if (term_tag(f[2]) != TAG_CLO || term_loc(f[2]) != 0)
+        bendpy_panic("float32 modifiers require a captureless function; use a template");
+      break;
+#endif
     default: bendpy_panic("unsupported foreign effect in Python extension");
+  }
+}
+
+// Native buffer operations touch retained storage and plain C metadata only.
+// Errors are raised after leaving the runtime and reattaching to Python.
+static BpView* bp_view(BpCall* call, u64 handle) {
+  u32 index = bp_open(call->key ^ 0x66333276696577ull, (u32)handle);
+  if (handle > UINT32_MAX || index >= call->view_count || !call->views[index].live) {
+    call->view_error = "invalid or released float32 view";
+    call->view_exception = PyExc_ValueError;
+    return NULL;
+  }
+  return &call->views[index];
+}
+
+static char* bp_view_at(BpCall* call, BpView* view, u64 index) {
+  if (index >= view->size) {
+    call->view_error = "float32 view index out of bounds";
+    call->view_exception = PyExc_IndexError;
+    return NULL;
+  }
+  if (view->contiguous) return (char*)view->buffer.buf + index * sizeof(float);
+  Py_ssize_t offset = 0;
+  for (int axis = view->buffer.ndim; axis-- > 0;) {
+    size_t dimension = (size_t)view->buffer.shape[axis];
+    offset += (Py_ssize_t)(index % dimension) * view->buffer.strides[axis];
+    index /= dimension;
+  }
+  return (char*)view->buffer.buf + offset;
+}
+
+static bool bp_memory_effect(Env e, BpCall* call) {
+  switch (call->effect) {
+#ifdef CID(f32_size)
+    case CID(f32_size):
+#endif
+#ifdef CID(f32_shape)
+    case CID(f32_shape):
+#endif
+#ifdef CID(f32_read)
+    case CID(f32_read):
+#endif
+#ifdef CID(f32_write)
+    case CID(f32_write):
+#endif
+#ifdef CID(f32_modify)
+    case CID(f32_modify):
+#endif
+#if defined(CID(f32_size)) || defined(CID(f32_shape)) || defined(CID(f32_read)) || defined(CID(f32_write)) || defined(CID(f32_modify))
+    {
+      BpView* view = bp_view(call, call->fields[0]);
+      if (!view) return true;
+      Term handle = term_pak(CID(F32View), (u32)call->fields[0]);
+#ifdef CID(f32_size)
+      if (call->effect == CID(f32_size)) {
+        call->argument = io_tup(e, handle, (Term)view->size); return true;
+      }
+#endif
+#ifdef CID(f32_shape)
+      if (call->effect == CID(f32_shape)) {
+        Term shape = term_pak(CID(Nil), 0);
+        for (int axis = view->buffer.ndim; axis-- > 0;)
+          shape = io_node(e, CID(Con), (Term)view->buffer.shape[axis], shape);
+        call->argument = io_tup(e, handle, shape); return true;
+      }
+#endif
+      char* address = bp_view_at(call, view, call->fields[1]);
+      if (!address) return true;
+      u32 bits;
+#ifdef CID(f32_read)
+      if (call->effect == CID(f32_read)) {
+        memcpy(&bits, address, sizeof(bits));
+        call->argument = io_tup(e, handle, (Term)bits); return true;
+      }
+#endif
+      if (!view->writable) {
+        call->view_error = "float32 view was borrowed read-only";
+        call->view_exception = PyExc_BufferError;
+        return true;
+      }
+#ifdef CID(f32_modify)
+      if (call->effect == CID(f32_modify)) {
+        memcpy(&bits, address, sizeof(bits));
+        bits = (u32)bp_apply(e, call->fields[2], (Term)bits);
+      } else
+#endif
+      {
+        bits = (u32)call->fields[2];
+      }
+      memcpy(address, &bits, sizeof(bits));
+      call->argument = handle; return true;
+    }
+#endif
+    default: return false;
   }
 }
 
@@ -400,30 +540,39 @@ static bool bp_native(BpCall* call, BpOperation operation) {
         break;
       }
       case BP_RESUME: {
-        if (call->pending) {
-          call->argument = bp_pack(e, call);
-          call->pending = false;
-          free(call->buffer); call->buffer = NULL;
+        call->native_more = false;
+        // Bound cancellation latency without attaching for every element.
+        for (size_t operations = 0;; ++operations) {
+          if (call->pending) {
+            call->argument = bp_pack(e, call);
+            call->pending = false;
+            free(call->buffer); call->buffer = NULL;
+          }
+          Term request = bp_apply(e, call->continuation, call->argument);
+          call->continuation = 0;
+          call->effect = (u32)term_aux(request);
+          if (call->effect == CID(Emit)) {
+            Term value;
+            spare_free(e, 0, ctr_take(e, request, 1, &value));
+            if (call->module) term_drop(e, value);
+            else call->result = bp_unbox(e, value);
+            call->done = true;
+            break;
+          }
+          u32 n = cid_arity(call->effect);
+          if (n == 0 || n > 5) bendpy_panic("unsupported foreign effect arity");
+          spare_free(e, cls_fit(n), ctr_take(e, request, n, call->fields));
+          call->continuation = call->fields[n - 1];
+          bp_decode(e, call);
+          if (!bp_memory_effect(e, call) || call->view_error) break;
+          if (operations == 4095) { call->native_more = true; break; }
         }
-        Term request = bp_apply(e, call->continuation, call->argument);
-        call->continuation = 0;
-        call->effect = (u32)term_aux(request);
-        if (call->effect == CID(Emit)) {
-          Term value;
-          spare_free(e, 0, ctr_take(e, request, 1, &value));
-          if (call->module) term_drop(e, value);
-          else call->result = bp_unbox(e, value);
-          call->done = true;
-          break;
-        }
-        u32 n = cid_arity(call->effect);
-        if (n == 0 || n > 5) bendpy_panic("unsupported foreign effect arity");
-        spare_free(e, cls_fit(n), ctr_take(e, request, n, call->fields));
-        call->continuation = call->fields[n - 1];
-        bp_decode(e, call);
         break;
       }
       case BP_DROP:
+        if (call->native_more) {
+          term_drop(e, call->argument); call->native_more = false;
+        }
         if (call->continuation) term_drop(e, call->continuation);
         break;
     }
@@ -431,7 +580,7 @@ static bool bp_native(BpCall* call, BpOperation operation) {
   bp_current = NULL;
   if (thread) PyEval_RestoreThread(thread);
   bp_assert_attached();
-  return call->error[0] == 0;
+  return call->error[0] == 0 && call->view_error == NULL;
 }
 
 // Each invocation owns a reference arena. Handles never contain PyObject*
@@ -548,6 +697,79 @@ static bool bp_export(BpCall* call) {
   return added == 0;
 }
 
+#ifdef CID(borrow_f32)
+static bool bp_borrow_f32(BpCall* call, PyObject* object, bool writable) {
+  Py_buffer buffer;
+  int flags = PyBUF_STRIDES | PyBUF_FORMAT | (writable ? PyBUF_WRITABLE : 0);
+  if (PyObject_GetBuffer(object, &buffer, flags) < 0) return false;
+  const char* format = buffer.format;
+  const char* error = NULL;
+  if (!format || buffer.itemsize != sizeof(float) ||
+      !(strcmp(format, "f") == 0 || strcmp(format, "@f") == 0 ||
+        strcmp(format, "=f") == 0 || strcmp(format, "<f") == 0))
+    error = "expected native float32 storage; no implicit casts or copies";
+  if (buffer.ndim < 0 || buffer.ndim > PyBUF_MAX_NDIM || buffer.len < 0 ||
+      buffer.len % sizeof(float) || (u64)(buffer.len / sizeof(float)) > NAT_IMM ||
+      (buffer.ndim > 0 && !buffer.shape))
+    error = "unsupported float32 buffer dimensions or length";
+  // A buffer export describes valid storage; its span must also fit host address
+  // arithmetic. Exotic overlapping layouts are accepted only for read access.
+  Py_ssize_t low = 0, high = 0;
+  size_t product = 1;
+  struct { size_t stride, dimension; } axes[PyBUF_MAX_NDIM];
+  int count = 0;
+  if (!error) {
+    for (int axis = 0; axis < buffer.ndim; ++axis) {
+      Py_ssize_t dimension = buffer.shape[axis], stride = buffer.strides ? buffer.strides[axis] : 0, span;
+      if (dimension < 0 || (u64)dimension > NAT_IMM) { error = "unsupported float32 dimension"; break; }
+      if (__builtin_mul_overflow(product, (size_t)dimension, &product)) {
+        error = "float32 element count overflow"; break;
+      }
+      if (dimension == 0 || !buffer.strides) continue;
+      if (__builtin_mul_overflow(dimension - 1, stride, &span) ||
+          (span < 0 ? __builtin_add_overflow(low, span, &low) : __builtin_add_overflow(high, span, &high))) {
+        error = "float32 stride offset overflow"; break;
+      }
+      if (dimension > 1) {
+        size_t absolute = stride < 0 ? (size_t)(-(stride + 1)) + 1 : (size_t)stride;
+        int at = count++;
+        while (at > 0 && axes[at - 1].stride > absolute) { axes[at] = axes[at - 1]; --at; }
+        axes[at].stride = absolute; axes[at].dimension = (size_t)dimension;
+      }
+    }
+    if (!error && high > PY_SSIZE_T_MAX - (Py_ssize_t)sizeof(float))
+      error = "float32 storage span overflow";
+    if (!error && (product != (size_t)buffer.len / sizeof(float) || (product && !buffer.buf)))
+      error = "inconsistent float32 buffer shape";
+    if (!error && writable && product && buffer.strides) {
+      size_t span = sizeof(float);
+      for (int axis = 0; axis < count; ++axis) {
+        size_t extra;
+        if (axes[axis].stride < span) { error = "writable float32 view must not overlap"; break; }
+        if (__builtin_mul_overflow(axes[axis].dimension - 1, axes[axis].stride, &extra) ||
+            __builtin_add_overflow(span, extra, &span) || span > PY_SSIZE_T_MAX) {
+          error = "float32 storage span overflow"; break;
+        }
+      }
+    }
+  }
+  if (error) { PyBuffer_Release(&buffer); PyErr_SetString(PyExc_BufferError, error); return false; }
+  if (call->view_count == UINT32_MAX) {
+    PyBuffer_Release(&buffer); PyErr_SetString(PyExc_OverflowError, "too many float32 views"); return false;
+  }
+  if (call->view_count == call->view_capacity) {
+    size_t capacity = call->view_capacity ? call->view_capacity * 2 : 4;
+    BpView* views = PyMem_Realloc(call->views, capacity * sizeof(BpView));
+    if (!views) { PyBuffer_Release(&buffer); PyErr_NoMemory(); return false; }
+    call->views = views; call->view_capacity = capacity;
+  }
+  call->views[call->view_count] = (BpView){ .buffer = buffer, .size = product,
+    .live = true, .writable = writable, .contiguous = !buffer.strides || PyBuffer_IsContiguous(&buffer, 'C') };
+  call->result_kind = BP_F32_VIEW; call->result = call->view_count++;
+  return true;
+}
+#endif
+
 static bool bp_effect(BpCall* call) {
   bp_assert_attached();
   Term* f = call->fields;
@@ -556,6 +778,17 @@ static bool bp_effect(BpCall* call) {
   switch (call->effect) {
 #ifdef CID(export)
     case CID(export): return bp_export(call);
+#endif
+#ifdef CID(borrow_f32)
+    case CID(borrow_f32):
+      a = bp_get(call, f[0]); return a && bp_borrow_f32(call, a, f[1] != 0);
+#endif
+#ifdef CID(f32_release)
+    case CID(f32_release): {
+      BpView* view = bp_view(call, f[0]);
+      if (!view) { PyErr_SetString(call->view_exception, call->view_error); return false; }
+      view->live = false; PyBuffer_Release(&view->buffer); return true;
+    }
 #endif
 #ifdef CID(require_no_kwargs)
     case CID(require_no_kwargs):
@@ -747,6 +980,10 @@ static PyObject* bp_run(BpCall* call, BpOperation start) {
   while (ok && !call->done) {
     ok = bp_native(call, BP_RESUME);
     if (!ok || call->done) break;
+    if (call->native_more) {
+      ok = PyErr_CheckSignals() == 0;
+      continue;
+    }
     ok = bp_effect(call);
     // Conversions returning native data retain the buffer until BP_RESUME packs it.
     if (call->result_kind != BP_STRING && call->result_kind != BP_BYTES) { free(call->buffer); call->buffer = NULL; }
@@ -757,7 +994,8 @@ static PyObject* bp_run(BpCall* call, BpOperation start) {
     PyObject* object = call->module ? call->module : bp_get(call, call->result);
     if (object) result = Py_NewRef(object);
   } else {
-    if (!PyErr_Occurred()) PyErr_SetString(PyExc_RuntimeError, call->error);
+    if (!PyErr_Occurred()) PyErr_SetString(call->view_exception ? call->view_exception : PyExc_RuntimeError,
+      call->view_error ? call->view_error : call->error);
     // A Python exception only aborts its invocation. Native failures discard
     // the damaged instance rather than affecting other callers.
     if (call->runtime && !call->error[0]) bp_native(call, BP_DROP);
@@ -766,6 +1004,9 @@ static PyObject* bp_run(BpCall* call, BpOperation start) {
   if (call->runtime) bp_runtime_release(call->runtime);
   call->runtime = NULL;
   free(call->buffer);
+  for (size_t i = 0; i < call->view_count; ++i)
+    if (call->views[i].live) PyBuffer_Release(&call->views[i].buffer);
+  PyMem_Free(call->views);
   for (size_t i = 0; i < call->count; ++i) Py_DECREF(call->objects[i]);
   PyMem_Free(call->objects);
   return result;

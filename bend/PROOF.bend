@@ -1,6 +1,7 @@
 import Base
 import ./LAWS.bend as Laws
 import ./python.bend as Python
+import ./TENSOR_PROOF.bend as TensorProof
 
 def Laws.arity_empty():
   {==}

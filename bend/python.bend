@@ -216,3 +216,31 @@ def export_bool(~f: Bool -> Bool, name: String, release_gil: Bool) -> IO(Unit):
 
 def export_binary_u32(~f: U32 -> U32 -> U32, name: String, release_gil: Bool) -> IO(Unit):
   export(name, invoke_binary_u32(~f), release_gil)
+
+# A sealed borrow of existing native float32 CPU storage. Unlike Object, the
+# access capability is affine. Python aliases must remain synchronized.
+type F32View is Type:
+  F32View{id: U32}
+
+def borrow_f32(value: Object, writable: Bool) -> IO(F32View):
+  import "./python.c"
+
+def f32_size(view: F32View) -> IO(Pair(F32View, Nat)):
+  import "./python.c"
+
+def f32_shape(view: F32View) -> IO(Pair(F32View, List<Nat>)):
+  import "./python.c"
+
+# Flat logical row-major indices, with bounds checks rather than wrapping.
+def f32_read(view: F32View, index: Nat) -> IO(Pair(F32View, F32)):
+  import "./python.c"
+
+def f32_write(view: F32View, index: Nat, value: F32) -> IO(F32View):
+  import "./python.c"
+
+# Fuse one load, a captureless Bend callback, and one store.
+def f32_modify(view: F32View, index: Nat, function: F32 -> F32) -> IO(F32View):
+  import "./python.c"
+
+def f32_release(view: F32View) -> IO(Unit):
+  import "./python.c"

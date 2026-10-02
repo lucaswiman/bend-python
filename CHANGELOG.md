@@ -15,6 +15,12 @@ when its version has a section below.
   writing and proving laws, including agreeing on law statements with the user.
   It includes a project scaffold, a first-error filter and a definition
   reorderer.
+- Zero-copy CPU float32 borrows for NumPy arrays, PyTorch tensors and Python
+  buffer exporters; affine, sealed views with shape, indexed read/write and
+  in-place Bend mapping. Supports strided layouts without allocating element
+  storage, cleans up on errors/cancellation, and tracks PyTorch mutations.
+- Mutation-checked storage/lease laws and laws for the Bend traversal driver,
+  with real NumPy/PyTorch integration tests in CI.
 
 ## [0.1.0] - 2026-09-29
 

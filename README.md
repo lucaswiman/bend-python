@@ -151,6 +151,77 @@ handle with a per-call key and rejects invalid decoded handles with `ValueError`
 This detects accidental fabrication or reuse from another call probabilistically;
 it is not an absolute guarantee or a security boundary.
 
+## NumPy arrays and PyTorch tensors
+
+Import `./bend/tensor.bend` to borrow existing CPU float32 storage without
+copying elements into Bend. NumPy uses the Python buffer protocol; PyTorch uses
+`tensor.numpy()` with its default sharing behavior. Neither adapter casts,
+transfers, detaches or makes an array contiguous. NumPy and PyTorch are optional
+runtime dependencies; PyTorch borrowing also requires NumPy.
+
+```bend
+import Base
+import ./bend/tensor.bend as Tensor
+
+def half(x: F32) -> F32:
+  (x / 2.0 : F32)
+
+def main() -> IO(Unit):
+  do IO<Unit>:
+    Tensor.export_numpy_f32_inplace(~half, "numpy_half_inplace", True{})
+    Tensor.export_torch_f32_inplace(~half, "torch_half_inplace", True{})
+```
+
+```python
+>>> import numpy as np
+>>> import fast
+>>> a = np.arange(8, dtype=np.float32)
+>>> fast.numpy_half_inplace(a[::2])       # mutates shared storage
+array([0., 1., 2., 3.], dtype=float32)
+>>> a
+array([0., 1., 1., 3., 2., 5., 3., 7.], dtype=float32)
+```
+
+The exports return the exact input object. They support scalars, empty arrays,
+transposes, negative strides and ordinary slices. Writable views must be
+non-overlapping: a conservative stride check rejects broadcast/overlapping
+storage and some unusual interleaved layouts. Read-only borrows can read shared
+cells. Unsupported dtypes, byte order, devices and layouts raise Python
+exceptions before mutation. Only ordinary `torch.Tensor` inputs are supported; subclasses that can customize
+conversion are rejected. PyTorch tensors requiring gradients are rejected,
+including under `torch.no_grad()`; forward AD tensors are also rejected. An
+explicit `tensor.detach()` shares storage and is accepted. Writable PyTorch
+borrows increment its version counter before modification, so backward detects
+changes to saved tensors or their detached aliases. This integration does not
+provide differentiation through Bend.
+
+For custom algorithms, `Tensor.borrow_f32(object, writable)` or
+`Tensor.borrow_torch_f32(object, writable)` returns an affine `Python.F32View`:
+
+| Bend API | Result |
+|---|---|
+| `Python.f32_size(view)` | `(view, count)` with a `Nat` count, including sizes above 2**32 |
+| `Python.f32_shape(view)` | `(view, List<Nat>)`; metadata only |
+| `Python.f32_read(view, index)` | `(view, F32)` at a bounds-checked logical row-major index |
+| `Python.f32_write(view, index, value)` | Updated view; requires writable access |
+| `Python.f32_modify(view, index, function)` | Load, apply a captureless Bend function, store |
+| `Tensor.map_inplace(~function, view)` | Map a closed template over the view and return it |
+| `Python.f32_release(view)` | Release the borrow |
+
+Thread the returned view through each operation and release it when done.
+Every borrow is also released automatically when its invocation ends, including
+exceptions and cancellation. The exporter stays alive throughout the borrow;
+views cannot be retained across calls. Writable borrows require exclusive access to the storage: no concurrent reads,
+writes, resizing or metadata changes through Python or native aliases.
+Read-only borrows allow concurrent reads, but exclude writes, resizing and
+metadata changes. These rules also apply while the GIL is released. A borrow
+pins a buffer export, but does not lock all aliases. Native memory effects run without
+Python calls between elements and check signals between bounded batches;
+interruption leaves completed writes in place. No array-sized temporary is
+allocated. Strided access takes work proportional to rank per element, and
+Bend's per-element driver can be substantially slower than NumPy/PyTorch
+vectorized kernels; benchmark your actual algorithm.
+
 ## Threads and the GIL
 
 Every call runs in its own Bend runtime instance (heap, stack and allocator),
@@ -168,6 +239,11 @@ The build refuses to compile unless every law checks:
 - **Argument checks.** Typed exports accept exactly the right number of
   arguments and request a `TypeError` for every other count
   ([`bend/LAWS.bend`](https://github.com/lucaswiman/bend-python/blob/main/bend/LAWS.bend)).
+- **Borrowed arrays.** A pure storage/lease model proves count preservation,
+  read-after-write, preservation of other cells, bounds and permission checks,
+  and release rules. Laws about the actual Bend map driver specify its empty
+  case and one-effect traversal step
+  ([`bend/TENSOR_LAWS.bend`](https://github.com/lucaswiman/bend-python/blob/main/bend/TENSOR_LAWS.bend)).
 - **Thread protocol.** A model of the C driver proves that Python operations
   happen only while attached and never during native evaluation, that every
   call returns attached (failures included), and that free-threaded builds
@@ -194,6 +270,7 @@ its evidence:
 | Accidental forged or stale handles are detected | Sealing in C; tests. Rejection is probabilistic: 32-bit collisions remain possible. Hostile Bend code can import its own C |
 | Exports cannot capture variables | Checked by C at import; test |
 | Objects cross unchanged; conversions are strict | C; tests |
+| Borrowed arrays retain storage identity, respect strides, clean up on failure, and notify PyTorch | C/Python integration; real NumPy, PyTorch, buffer, reentrancy and cancellation tests |
 
 ## Limits
 
@@ -213,6 +290,9 @@ its evidence:
 bash scripts/bootstrap.sh              # Python 3.14, uv venv, checksum-verified Bend
 uv pip install --python .venv/bin/python --no-build-isolation -e .
 (cd examples && CC=clang ../.venv/bin/python setup.py build_ext --inplace)
+# Optional integration dependencies (CPU PyTorch wheel):
+uv pip install --python .venv/bin/python numpy
+uv pip install --python .venv/bin/python torch --index-url https://download.pytorch.org/whl/cpu
 .venv/bin/python -m unittest discover -s tests
 uvx prek install                       # ruff, file hygiene, and proof gates on commit
 ```
