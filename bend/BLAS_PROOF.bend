@@ -40,16 +40,31 @@ def same_nat(+count: Nat) -> {Nat.is_eq(count, count) == True{} : Bool}:
     case 1n+pred:
       same_nat(pred)
 
-def and_components(a: Bool, b: Bool, c: Bool, accepted: {a && (b && c) == True{} : Bool}) -> {(a, (b, c)) == (True{}, (True{}, True{})) : Pair(Bool, Pair(Bool, Bool))}:
-  match a b c:
-    case False{} b c:
-      Empty.absurd({(False{}, (b, c)) == (True{}, (True{}, True{})) : Pair(Bool, Pair(Bool, Bool))}, false_ne_true(accepted))
-    case True{} False{} c:
-      Empty.absurd({(True{}, (False{}, c)) == (True{}, (True{}, True{})) : Pair(Bool, Pair(Bool, Bool))}, false_ne_true(accepted))
-    case True{} True{} False{}:
-      Empty.absurd({(True{}, (True{}, False{})) == (True{}, (True{}, True{})) : Pair(Bool, Pair(Bool, Bool))}, false_ne_true(accepted))
-    case True{} True{} True{}:
+# Boolean acceptance implies propositional equality of the dimensions.
+def nat_eq_sound(a: Nat, b: Nat, equal: {Nat.is_eq(a, b) == True{} : Bool}) -> {a == b : Nat}:
+  match a b:
+    case 0n 0n:
       {==}
+    case 0n 1n+bp:
+      Empty.absurd({0n == 1n+bp : Nat}, false_ne_true(equal))
+    case 1n+ap 0n:
+      Empty.absurd({1n+ap == 0n : Nat}, false_ne_true(equal))
+    case 1n+ap 1n+bp:
+      Equal.cong(Nat, Nat, x => 1n+x, ap, bp, nat_eq_sound(ap, bp, equal))
+
+def and_left(a: Bool, b: Bool, accepted: {a && b == True{} : Bool}) -> {a == True{} : Bool}:
+  match a:
+    case False{}:
+      accepted
+    case True{}:
+      {==}
+
+def and_right(a: Bool, b: Bool, accepted: {a && b == True{} : Bool}) -> {b == True{} : Bool}:
+  match a:
+    case False{}:
+      Empty.absurd({b == True{} : Bool}, false_ne_true(accepted))
+    case True{}:
+      accepted
 
 def Laws.vector_reconstructs_shape(shape, count, accepted):
   match shape:
@@ -81,12 +96,18 @@ def Laws.vectors_same_count_accepted(count):
   same_nat(count)
 
 def Laws.vectors_accepted_counts_equal(left, right, accepted):
-  accepted
+  nat_eq_sound(left, right, accepted)
 
 def Laws.matmul_matching_dimensions_accepted(rows, inner, cols):
   %Equal.sym(Bool, Nat.is_eq(inner, inner), True{}, same_nat(inner)) : {_ && (Nat.is_eq(rows, rows) && Nat.is_eq(cols, cols)) == True{} : Bool}
   %Equal.sym(Bool, Nat.is_eq(rows, rows), True{}, same_nat(rows)) : {True{} && (_ && Nat.is_eq(cols, cols)) == True{} : Bool}
   same_nat(cols)
 
-def Laws.matmul_accepted_dimensions_equal(ar, ac, br, bc, out_rows, out_cols, accepted):
-  and_components(Nat.is_eq(ac, br), Nat.is_eq(ar, out_rows), Nat.is_eq(bc, out_cols), accepted)
+def Laws.matmul_accepted_inner_equal(ar, ac, br, bc, out_rows, out_cols, accepted):
+  nat_eq_sound(ac, br, and_left(Nat.is_eq(ac, br), Nat.is_eq(ar, out_rows) && Nat.is_eq(bc, out_cols), accepted))
+
+def Laws.matmul_accepted_rows_equal(ar, ac, br, bc, out_rows, out_cols, accepted):
+  nat_eq_sound(ar, out_rows, and_left(Nat.is_eq(ar, out_rows), Nat.is_eq(bc, out_cols), and_right(Nat.is_eq(ac, br), Nat.is_eq(ar, out_rows) && Nat.is_eq(bc, out_cols), accepted)))
+
+def Laws.matmul_accepted_cols_equal(ar, ac, br, bc, out_rows, out_cols, accepted):
+  nat_eq_sound(bc, out_cols, and_right(Nat.is_eq(ar, out_rows), Nat.is_eq(bc, out_cols), and_right(Nat.is_eq(ac, br), Nat.is_eq(ar, out_rows) && Nat.is_eq(bc, out_cols), accepted)))

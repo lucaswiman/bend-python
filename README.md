@@ -189,13 +189,14 @@ transposes, negative strides and ordinary slices. Writable views must be
 non-overlapping: a conservative stride check rejects broadcast/overlapping
 storage and some unusual interleaved layouts. Read-only borrows can read shared
 cells. Unsupported dtypes, byte order, devices and layouts raise Python
-exceptions before mutation. Only ordinary `torch.Tensor` inputs are supported; subclasses that can customize
-conversion are rejected. PyTorch tensors requiring gradients are rejected,
-including under `torch.no_grad()`; forward AD tensors are also rejected. An
-explicit `tensor.detach()` shares storage and is accepted. Writable PyTorch
-borrows increment its version counter before modification, so backward detects
-changes to saved tensors or their detached aliases. This integration does not
-provide differentiation through Bend.
+exceptions before mutation. Only ordinary `torch.Tensor` inputs are supported;
+subclasses that can customize conversion are rejected. PyTorch tensors
+requiring gradients are rejected, including under `torch.no_grad()`; forward AD
+tensors are also rejected. An explicit `tensor.detach()` shares storage and is
+accepted. Writable PyTorch borrows increment the tensor's version counter
+before modification, so backward detects changes to saved tensors or their
+detached aliases. This integration does not provide differentiation through
+Bend.
 
 For custom algorithms, `Tensor.borrow_f32(object, writable)` or
 `Tensor.borrow_torch_f32(object, writable)` returns an affine
@@ -233,18 +234,19 @@ validation before each cell is written.
 
 Every borrow is also released automatically when its invocation ends, including
 exceptions and cancellation. The exporter stays alive throughout the borrow;
-views cannot be retained across calls. Writable borrows require exclusive access to the storage: no concurrent reads,
-writes, resizing or metadata changes through Python or native aliases.
-Read-only borrows allow concurrent reads, but exclude writes, resizing and
-metadata changes. These rules also apply while the GIL is released. A borrow
-pins a buffer export, but does not lock all aliases. Native memory effects run without
-Python calls between elements and check signals between batches of at most
-4096 native operations; callback work determines the time between checks;
-interruption leaves completed writes in place. No array-sized temporary is
-allocated. Map traversal uses O(rank) metadata, adds strides between cells, and
-carries across axes without per-cell division. Random indexed access still
-takes work proportional to rank. Bend's scalar callbacks can be slower than
-NumPy/PyTorch vectorized kernels; benchmark your actual algorithm.
+views cannot be retained across calls. Writable borrows require exclusive
+access to the storage: no concurrent reads, writes, resizing or metadata
+changes through Python or native aliases. Read-only borrows allow concurrent
+reads, but exclude writes, resizing and metadata changes. These rules also
+apply while the GIL is released. A borrow pins a buffer export, but does not
+lock all aliases. Native memory effects run without Python calls between
+elements and check signals between batches of at most 4096 native operations;
+callback work determines the time between checks; interruption leaves completed
+writes in place. No array-sized temporary is allocated. Map traversal uses
+O(rank) metadata, adds strides between cells, and carries across axes without
+per-cell division. Random indexed access still takes work proportional to rank.
+Bend's scalar callbacks can be slower than NumPy/PyTorch vectorized kernels;
+benchmark your actual algorithm.
 
 ## Optional bulk BLAS
 
@@ -332,7 +334,8 @@ The build refuses to compile unless every law checks:
   These are proofs of the Bend program and arithmetic model, not the C traversal
   ([`bend/TENSOR_LAWS.bend`](https://github.com/lucaswiman/bend-python/blob/main/bend/TENSOR_LAWS.bend)).
 - **BLAS dimensions.** Exact vector/matrix ranks, acceptance of matching shapes,
-  equal vector lengths, and all three matrix-product dimension equations
+  and that accepted shapes have equal vector lengths and satisfy all three
+  matrix-product dimension equations as `Nat` equalities
   ([`bend/BLAS_LAWS.bend`](https://github.com/lucaswiman/bend-python/blob/main/bend/BLAS_LAWS.bend)).
   These pure metadata laws do not prove the BLAS implementation or C checks.
 - **Thread protocol.** A model of the C driver proves that Python operations
