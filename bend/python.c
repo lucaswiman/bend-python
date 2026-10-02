@@ -108,8 +108,8 @@ static _Atomic u64 bp_call_counter;
 #define BP_IDLE_LIMIT 8
 #define BP_STACK_BYTES (1ull << 31)
 #define BP_STACK_GUARD 16384
-// Instances whose heap grew past this are unmapped rather than cached, so idle
-// instances cannot pin a large call's resident pages until process exit.
+// Limit the dynamic heap's allocation high-water mark, excluding the sparse
+// HEAP_OFF metadata prefix. This is not a bound on total resident memory.
 #define BP_IDLE_HEAP_BYTES (32ull << 20)
 
 static void bp_assert_attached(void) {
@@ -167,7 +167,9 @@ static bool bp_runtime_reusable(BpRuntime* runtime) {
   if (runtime->poisoned) return false;
   if (runtime->heap == NULL) return true;
   u64 pages = a32_load(a32_at(runtime->heap, H_BUMP));
-  return (HEAP_OFF + (pages << PAGE_BITS)) * sizeof(u64) <= BP_IDLE_HEAP_BYTES;
+  // H_BUMP counts pages relative to HEAP_OFF. Divide the byte budget instead
+  // of multiplying the page count, so even an extreme count cannot overflow.
+  return pages <= (BP_IDLE_HEAP_BYTES / sizeof(u64)) >> PAGE_BITS;
 }
 
 static void bp_runtime_release(BpRuntime* runtime) {

@@ -365,7 +365,9 @@ its evidence:
   stack exhaustion still kill the process.
 - Each active instance reserves about 10 GiB of *virtual* memory, so `ulimit -v`
   or strict overcommit can make calls fail. Up to eight idle instances are
-  cached; an instance whose heap grew past 32 MiB is released instead.
+  cached; an instance whose dynamic heap allocation high-water mark exceeded
+  32 MiB is released instead. The budget excludes the sparse runtime metadata
+  prefix and does not bound total resident memory.
 - Bend's C runtime is private API. The build pins 2.0.28 and refuses to patch a
   runtime that has changed.
 
