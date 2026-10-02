@@ -143,6 +143,6 @@ Proved at every build (the SDK's own laws): typed exports accept exactly the
 right argument count; a model of the thread-attachment and runtime-lease
 protocol. Trusted and tested: the C bridge implements that model, object
 handles are sealed per call (forged handles are detected probabilistically),
-conversions are strict, each call runs in its own runtime instance on one core,
-and a native Bend failure raises `RuntimeError` for that call only. Details and
+conversions are strict, each call has its own runtime instance with one Bend
+worker, and a native Bend failure raises `RuntimeError` for that call only. Details and
 limits: PYTHON.md.

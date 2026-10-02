@@ -305,8 +305,9 @@ so threads call the same extension concurrently, and callbacks can reenter it.
 The third argument to `export` sets the GIL policy: `True{}` releases the GIL
 during pure Bend evaluation, `False{}` holds it. Free-threaded builds always
 detach during evaluation and never enable the GIL. The bridge reattaches before
-every Python operation. Each call uses one CPU core; Bend's own parallel
-scheduler and GPU backends are not enabled.
+every Python operation. Each Bend evaluator uses one worker; its parallel
+scheduler and GPU backends are not enabled. Invoked numerical libraries may
+use their own native thread pools.
 
 ## What is proved, and what is trusted
 
