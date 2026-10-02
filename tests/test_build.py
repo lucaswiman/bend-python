@@ -79,6 +79,55 @@ probe.bp_test_status.restype = ctypes.c_uint
 probe.bp_test_arm()
 """
 
+# Instrument only temporary extensions. Monotonic allocation IDs distinguish
+# reuse from malloc returning a freed context's address. Active counts and IDs
+# also expose a reentrant call accidentally borrowing its outer call's lease.
+NATIVE_CACHE_PROBE = r"""
+static _Atomic u64 bp_test_created, bp_test_destroyed, bp_test_last_id;
+static _Atomic u64 bp_test_active, bp_test_poisoned, bp_test_large;
+
+__attribute__((visibility("default"))) u64 bp_test_cache_stat(unsigned index) {
+  switch (index) {
+    case 0: return atomic_load(&bp_test_created);
+    case 1: return atomic_load(&bp_test_destroyed);
+    case 2: return atomic_load(&bp_test_last_id);
+    case 3: return atomic_load(&bp_test_active);
+    case 4: return atomic_load(&bp_test_poisoned);
+    case 5: return atomic_load(&bp_test_large);
+    case 6: return (BP_IDLE_HEAP_BYTES / sizeof(u64)) >> PAGE_BITS;
+    default: abort();
+  }
+}
+"""
+
+NATIVE_CACHE_BOUNDARY_PROBE = r"""
+// Classify counter boundaries on a real idle heap, restoring its actual bump
+// before unlocking. No evaluator runs with these synthetic counter values.
+__attribute__((visibility("default"))) bool bp_test_cache_accepts(u32 pages) {
+  pthread_mutex_lock(&bp_pool_mutex);
+  BpRuntime* runtime = bp_idle;
+  if (!runtime || !runtime->heap) abort();
+  u32 saved = a32_load(a32_at(runtime->heap, H_BUMP));
+  a32_store(a32_at(runtime->heap, H_BUMP), pages);
+  bool result = bp_runtime_reusable(runtime);
+  a32_store(a32_at(runtime->heap, H_BUMP), saved);
+  pthread_mutex_unlock(&bp_pool_mutex);
+  return result;
+}
+"""
+
+CACHE_SETUP = """
+import ctypes
+import bend_example as module
+probe = ctypes.CDLL(module.__file__)
+probe.bp_test_cache_stat.argtypes = [ctypes.c_uint]
+probe.bp_test_cache_stat.restype = ctypes.c_uint64
+probe.bp_test_cache_accepts.argtypes = [ctypes.c_uint32]
+probe.bp_test_cache_accepts.restype = ctypes.c_bool
+def stats():
+    return tuple(probe.bp_test_cache_stat(index) for index in range(6))
+"""
+
 
 class BuildTests(unittest.TestCase):
     def build(
@@ -90,6 +139,7 @@ class BuildTests(unittest.TestCase):
         break_vendored_library=False,
         auto_vendor=False,
         deterministic_handles=False,
+        native_cache_probe=False,
     ):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -158,6 +208,46 @@ class BuildTests(unittest.TestCase):
                     "  bp_test_enter(e.mem);\n" + evaluator,
                 )
             )
+        if native_cache_probe:
+            shim = directory / "bend/python.c"
+            source = shim.read_text()
+            replacements = [
+                ("  bool poisoned;", "  bool poisoned;\n  u64 test_id;"),
+                (
+                    "static BpRuntime* bp_runtime_acquire(void) {",
+                    NATIVE_CACHE_PROBE + "\nstatic BpRuntime* bp_runtime_acquire(void) {",
+                ),
+                (
+                    "      runtime->cube_log = 7;",
+                    "      runtime->cube_log = 7;\n"
+                    "      runtime->test_id = atomic_fetch_add(&bp_test_created, 1) + 1;",
+                ),
+                (
+                    "  if (!runtime) PyErr_NoMemory();",
+                    "  if (!runtime) PyErr_NoMemory();\n"
+                    "  else {\n"
+                    "    atomic_store(&bp_test_last_id, runtime->test_id);\n"
+                    "    atomic_fetch_add(&bp_test_active, 1);\n"
+                    "  }",
+                ),
+                (
+                    "  if (!retained) {",
+                    "  atomic_fetch_sub(&bp_test_active, 1);\n"
+                    "  if (!retained) {\n"
+                    "    atomic_fetch_add(&bp_test_destroyed, 1);\n"
+                    "    if (runtime->poisoned) atomic_fetch_add(&bp_test_poisoned, 1);\n"
+                    "    else if (!reusable) atomic_fetch_add(&bp_test_large, 1);",
+                ),
+                (
+                    "static void bp_runtime_release(BpRuntime* runtime) {",
+                    NATIVE_CACHE_BOUNDARY_PROBE
+                    + "\nstatic void bp_runtime_release(BpRuntime* runtime) {",
+                ),
+            ]
+            for marker, replacement in replacements:
+                self.assertEqual(source.count(marker), 1)
+                source = source.replace(marker, replacement)
+            shim.write_text(source)
         # Build the example project against this checkout's SDK sources.
         result = subprocess.run(
             [sys.executable, "setup.py", "build_ext", "--inplace"],
@@ -239,11 +329,13 @@ def main() -> IO(Unit):
   Python.export_u32(~(seed => tree(6n, seed)), "work", True{})
 """,
             native_rendezvous=True,
+            native_cache_probe=True,
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.run_python(
             directory,
             RENDEZVOUS_SETUP
+            + CACHE_SETUP
             + """
 seeds = (41, 0xfffffff9)
 with ThreadPoolExecutor(max_workers=2) as executor:
@@ -253,6 +345,61 @@ with ThreadPoolExecutor(max_workers=2) as executor:
     assert [future.result() for future in futures] == expected
 status = probe.bp_test_status()
 assert status == 1, f"native overlap/context rendezvous failed: {status}"
+assert stats()[0:2] == (2, 0), stats()
+assert stats()[3] == 0, stats()
+for seed in seeds:
+    module.work(seed)
+assert stats()[0:2] == (2, 0), stats()
+""",
+        )
+
+    def test_native_cache_reuses_leases_and_discards_large_heap(self):
+        directory, result = self.build(native_cache_probe=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.run_python(
+            directory,
+            CACHE_SETUP
+            + """
+initial = stats()
+assert initial[0:2] == (1, 0), initial
+budget = probe.bp_test_cache_stat(6)
+assert probe.bp_test_cache_accepts(budget)
+assert not probe.bp_test_cache_accepts(budget + 1)
+assert not probe.bp_test_cache_accepts(0xffffffff)
+for value in range(20):
+    assert module.square(value) == value * value
+assert stats() == initial, (initial, stats())
+
+def nested():
+    outer = stats()
+    assert outer[3] == 1, outer
+    assert module.square(12) == 144
+    inner = stats()
+    assert inner[2] != outer[2], (outer, inner)
+    assert inner[3] == 1, inner
+    return 144
+
+assert module.call(nested) == 144
+assert stats()[0:2] == (2, 0), stats()
+assert stats()[3] == 0, stats()
+assert module.call(nested) == 144
+assert stats()[0:2] == (2, 0), stats()
+
+# The byte-to-list conversion allocates several words per byte in the actual
+# Bend heap. Keeping the list alive forces a high-water mark above 32 MiB.
+data = bytes(range(256)) * 8192
+assert module.reversed_bytes(data) == data[::-1]
+assert stats()[0:2] == (2, 1), stats()
+assert stats()[4:6] == (0, 1), stats()
+assert module.square(12) == 144
+assert stats()[0:2] == (2, 1), stats()
+# Nesting needs a second lease again: replace the evicted context, then reuse
+# both healthy contexts on the next nested call.
+assert module.call(nested) == 144
+assert stats()[0:2] == (3, 1), stats()
+assert module.call(nested) == 144
+assert stats()[0:2] == (3, 1), stats()
+assert stats()[3:6] == (0, 0, 1), stats()
 """,
         )
 
@@ -266,11 +413,13 @@ def main() -> IO(Unit):
   Python.export_u32(~(x => checked_square(x)), "checked_square", True{})
 """,
             native_rendezvous=True,
+            native_cache_probe=True,
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.run_python(
             directory,
             RENDEZVOUS_SETUP
+            + CACHE_SETUP
             + """
 def fail():
     try:
@@ -288,6 +437,8 @@ with ThreadPoolExecutor(max_workers=2) as executor:
 assert probe.bp_test_status() == 1
 for value in (0, 1, 12, 65535):
     assert module.checked_square(value) == value * value
+assert stats()[0:2] == (2, 1), stats()
+assert stats()[3:6] == (0, 1, 0), stats()
 """,
         )
 
@@ -313,11 +464,39 @@ def copy(request: Python.Call) -> IO(Python.Object):
     case _:
       Python.type_error(Python.Object, "expected an argument")
 
+def invoke_forged_function(request: Python.Call) -> IO(Python.Object):
+  Python.invoke(Python.PyObject{0}, [])
+
+def invoke_forged_argument(request: Python.Call) -> IO(Python.Object):
+  do IO<Python.Object>:
+    +function : Python.Object <- Python.unary(request)
+    Python.invoke(function, [function, function, function, function, function,
+      function, function, function, Python.PyObject{0}])
+
+def identical(request: Python.Call) -> IO(Python.Object):
+  match request:
+    case Python.PyCall{[left, right], _}:
+      do IO<Python.Object>:
+        result : Bool <- Python.identical(left, right)
+        Python.from_bool(result)
+    case _:
+      Python.type_error(Python.Object, "expected two arguments")
+
+def identical_forged(request: Python.Call) -> IO(Python.Object):
+  do IO<Python.Object>:
+    value : Python.Object <- Python.unary(request)
+    result : Bool <- Python.identical(value, Python.PyObject{0})
+    Python.from_bool(result)
+
 def main() -> IO(Unit):
   do IO<Unit>:
     Python.export("forge_constant", forge_constant, False{})
     Python.export("forge_next", forge_next, False{})
     Python.export("copy", copy, False{})
+    Python.export("invoke_forged_function", invoke_forged_function, False{})
+    Python.export("invoke_forged_argument", invoke_forged_argument, False{})
+    Python.export("identical", identical, False{})
+    Python.export("identical_forged", identical_forged, False{})
 """,
             deterministic_handles=True,
         )
@@ -337,6 +516,25 @@ for _ in range(200):
             raise AssertionError(f"{function.__name__} accepted a forged handle")
 # Rebuilding a handle from its own sealed value is not forging.
 assert module.copy(values[0], values[1]) is values[0]
+for function in (
+    module.invoke_forged_function, module.invoke_forged_argument, module.identical_forged
+):
+    try:
+        function(lambda value: value)
+    except ValueError as error:
+        assert "invalid Python object handle" in str(error), error
+    else:
+        raise AssertionError(f"{function.__name__} accepted a forged handle")
+class NoEquality:
+    def __eq__(self, other):
+        raise AssertionError("identity must not invoke equality")
+    def __bool__(self):
+        raise AssertionError("identity must not invoke truthiness")
+left, right = NoEquality(), NoEquality()
+assert module.identical(left, left) is True
+assert module.identical(left, right) is False
+assert module.identical(None, None) is True
+assert module.identical([], []) is False
 """,
         )
 

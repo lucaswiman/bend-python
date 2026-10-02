@@ -247,6 +247,22 @@ class NativeBindingsTests(unittest.TestCase):
                 function(*args, **kwargs)
         self.assertEqual(bend_example.square(12), 144)
 
+    def test_invoke_argument_vector_preserves_identity(self):
+        cycle = []
+        cycle.append(cycle)
+        values = (1 << 200, float("nan"), "a\x00é😀\ud800", cycle, object())
+
+        class Callable:
+            def __call__(self, *args):
+                return args
+
+        for function in (lambda *args: args, Callable()):
+            for count in (0, 1, 8, 9, 4096):
+                args = tuple(values[i % len(values)] for i in range(count))
+                result = bend_example.invoke(function, *args)
+                self.assertEqual(len(result), count)
+                self.assertTrue(all(a is b for a, b in zip(args, result, strict=True)))
+
     def test_lengths_are_exact_beyond_u32(self):
         class Sized:
             def __init__(self, size):
@@ -407,14 +423,11 @@ class NativeBindingsTests(unittest.TestCase):
 
     def test_callbacks_can_reenter_and_preserve_exceptions(self):
         self.assertEqual(bend_example.call(lambda a, *, b: a + b, 12, b=30), 42)
-        self.assertEqual(bend_example.call(bend_example.square, 12), 144)
-        self.assertEqual(
-            bend_example.call(
-                lambda x: bend_example.call(lambda y: bend_example.add(y, 1), x),
-                41,
-            ),
-            42,
-        )
+        for call in (bend_example.call, bend_example.invoke):
+            self.assertEqual(call(bend_example.square, 12), 144)
+            self.assertEqual(
+                call(lambda x, call=call: call(lambda y: bend_example.add(y, 1), x), 41), 42
+            )
 
         class Mapping:
             def __getitem__(self, key):
@@ -426,12 +439,13 @@ class NativeBindingsTests(unittest.TestCase):
         def fail():
             raise error
 
-        with self.assertRaises(ValueError) as raised:
-            bend_example.call(fail)
-        self.assertIs(raised.exception, error)
-        with self.assertRaises(TypeError):
-            bend_example.call(123)
-        self.assertEqual(bend_example.call(lambda: 42), 42)
+        for call in (bend_example.call, bend_example.invoke):
+            with self.assertRaises(ValueError) as raised:
+                call(fail)
+            self.assertIs(raised.exception, error)
+            with self.assertRaises(TypeError):
+                call(123)
+            self.assertEqual(call(lambda: 42), 42)
 
     def test_call_arena_releases_owned_references(self):
         class Payload:
@@ -445,11 +459,12 @@ class NativeBindingsTests(unittest.TestCase):
         del result
         gc.collect()
         self.assertIsNone(reference())
-        result = bend_example.call(Payload)
-        reference = weakref.ref(result)
-        del result
-        gc.collect()
-        self.assertIsNone(reference())
+        for call in (bend_example.call, bend_example.invoke):
+            result = call(Payload)
+            reference = weakref.ref(result)
+            del result
+            gc.collect()
+            self.assertIsNone(reference())
 
     def test_finalizers_released_by_the_arena_can_reenter(self):
         finalized = []
@@ -465,8 +480,11 @@ class NativeBindingsTests(unittest.TestCase):
             mapping = {"key": Reenter()}
             # The replaced value is finalized inside the set_item effect.
             bend_example.setitem(mapping, "key", None)
+            bend_example.invoke(lambda item: None, Reenter())
+            with self.assertRaises(TypeError):
+                bend_example.invoke(123, Reenter())
         gc.collect()
-        self.assertEqual(finalized, [10] * 300)
+        self.assertEqual(finalized, [10] * 500)
 
     def test_calls_from_multiple_python_threads(self):
         def worker(seed):
@@ -494,19 +512,25 @@ class NativeBindingsTests(unittest.TestCase):
             payloads = [object(), object()]
             errors = [ValueError("first callback"), ValueError("second callback")]
 
-            def worker(index):
+            def worker(task):
+                index = task % 2
                 payload = payloads[index]
                 def callback(value, *, keyword):
                     assert value is payload and keyword is payload
                     rendezvous.wait()
                     assert bend_example.echo(value) is payload
-                    assert bend_example.call(bend_example.square, 12) == 144
+                    assert bend_example.invoke(bend_example.square, 12) == 144
                     if index == 0:
                         raise errors[index]
-                    return bend_example.call(lambda item: item, value)
+                    return bend_example.invoke(lambda item: item, value)
 
                 try:
-                    result = bend_example.call(callback, payload, keyword=payload)
+                    if task < 2:
+                        result = bend_example.call(callback, payload, keyword=payload)
+                    else:
+                        result = bend_example.invoke(
+                            lambda value: callback(value, keyword=value), payload
+                        )
                 except ValueError as error:
                     assert index == 0 and error is errors[index]
                 else:
@@ -514,7 +538,7 @@ class NativeBindingsTests(unittest.TestCase):
                 assert bend_example.echo(payload) is payload
 
             with ThreadPoolExecutor(max_workers=2) as executor:
-                list(executor.map(worker, range(2)))
+                list(executor.map(worker, range(4)))
             assert bend_example.square(12) == 144
         """)
 

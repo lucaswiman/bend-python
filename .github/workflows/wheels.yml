@@ -40,6 +40,41 @@ jobs:
       - name: The SDK wheel must stay pure Python
         run: ls dist/bend_python-*-py3-none-any.whl
 
+  tensors:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        python: ["3.14", "3.14t"]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
+        with:
+          enable-cache: true
+      - run: uv venv --python ${{ matrix.python }} .venv
+      - run: bash scripts/bootstrap.sh
+      - run: uv pip install --python .venv/bin/python --no-build-isolation -e ".[blas]" numpy
+      - if: matrix.python == '3.14'
+        run: uv pip install --python .venv/bin/python torch --index-url https://download.pytorch.org/whl/cpu
+      - name: Build the example against the SDK
+        run: cd examples && CC=clang ../.venv/bin/python setup.py build_ext --inplace
+      - name: Exercise real NumPy, CPU PyTorch, and optional SciPy BLAS
+        env:
+          BEND: ${{ github.workspace }}/.tools/bend/bin/bend
+          CC: clang
+        run: |
+          .venv/bin/python - <<'PY'
+          import sys
+          import sysconfig
+          import unittest
+          sys.path.insert(0, "tests")
+          suite = unittest.defaultTestLoader.loadTestsFromNames(["test_tensors", "test_blas"])
+          result = unittest.TextTestRunner(verbosity=2).run(suite)
+          if sysconfig.get_config_var("Py_GIL_DISABLED"):
+              assert not sys._is_gil_enabled()
+          raise SystemExit(not result.wasSuccessful())
+          PY
+
   manylinux:
     runs-on: ubuntu-24.04
     timeout-minutes: 45

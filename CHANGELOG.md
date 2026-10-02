@@ -14,7 +14,35 @@ when its version has a section below.
   Python interface and its guarantees, Bend 2's checker rules with fixes, and
   writing and proving laws, including agreeing on law statements with the user.
   It includes a project scaffold, a first-error filter and a definition
-  reorderer.
+  reorderer. The numerical-libraries reference covers borrowed arrays, optional
+  native kernels, layouts, packaging, and proof boundaries.
+- Zero-copy CPU float32 borrows for NumPy arrays, PyTorch tensors and Python
+  buffer exporters; affine, sealed views with shape, indexed read/write and
+  in-place Bend mapping. Supports strided layouts without allocating element
+  storage, cleans up on errors/cancellation, and tracks PyTorch mutations.
+- Permission-indexed views and dependent, affine map programs for the actual
+  storage length, with mutation-checked elementwise semantics and cursor laws.
+  Real NumPy/PyTorch integration tests run in CI.
+- Optional SciPy BLAS scale, dot, axpy and matrix multiplication on borrowed
+  float32 buffers and CPU PyTorch tensors, with explicit layout/alias checks,
+  mutation-checked shape laws, and no mandatory scientific dependencies.
+
+### Changed
+
+- Closed-template maps avoid per-element successor objects; both map paths use
+  incremental strided traversal with constant storage per axis.
+- Positional Python calls use vectorcall, and native object identity avoids
+  Python callback setup. BLAS exports share lazily validated capsule bindings.
+- BLAS acceptance laws now prove equal vector lengths and all three matrix
+  dimension equations as `Nat` equalities, with independent laws for the inner
+  dimension, output rows, and output columns. These contracts cover the logical
+  Bend shape policy.
+
+### Fixed
+
+- Runtime cache eligibility now measures dynamic heap pages, excluding the
+  sparse metadata prefix that previously caused every initialized context to
+  be discarded. Large and failed contexts are still evicted.
 
 ## [0.1.0] - 2026-09-29
 

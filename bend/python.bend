@@ -52,6 +52,14 @@ def getattr(value: Object, name: String) -> IO(Object):
 def call(function: Object, args: Object, kwargs: Object) -> IO(Object):
   import "./python.c"
 
+# Positional-only calls preserve argument identity without creating containers.
+def invoke(function: Object, args: List<Object>) -> IO(Object):
+  import "./python.c"
+
+# Python's `is`, without invoking equality or truthiness methods.
+def identical(left: Object, right: Object) -> IO(Bool):
+  import "./python.c"
+
 def builtins(name: String) -> IO(Object):
   import "./python.c"
 
@@ -95,12 +103,6 @@ def import_module(name: String) -> IO(Object):
   import "./python.c"
 
 # Common Python operations are assembled here from the small effect boundary.
-def invoke(function: Object, args: List<Object>) -> IO(Object):
-  do IO<Object>:
-    positional : Object <- tuple(args)
-    keywords : Object <- empty_dict()
-    call(function, positional, keywords)
-
 def construct(name: String, args: List<Object>) -> IO(Object):
   do IO<Object>:
     function : Object <- builtins(name)
@@ -216,3 +218,61 @@ def export_bool(~f: Bool -> Bool, name: String, release_gil: Bool) -> IO(Unit):
 
 def export_binary_u32(~f: U32 -> U32 -> U32, name: String, release_gil: Bool) -> IO(Unit):
   export(name, invoke_binary_u32(~f), release_gil)
+
+# The erased permission index distinguishes read-only and writable borrows.
+# The native boundary still checks seals/lifetime: constructors are public.
+type F32View<-writable: Bool> is Type:
+  F32View{id: U32}
+
+def borrow_f32(value: Object, writable: Bool) -> IO(F32View<writable>):
+  import "./python.c"
+
+def f32_size(-writable: Bool, view: F32View<writable>) -> IO(Pair(F32View<writable>, Nat)):
+  import "./python.c"
+
+def f32_shape(-writable: Bool, view: F32View<writable>) -> IO(Pair(F32View<writable>, List<Nat>)):
+  import "./python.c"
+
+# Flat logical row-major indices remain checked at the native boundary.
+def f32_read(-writable: Bool, view: F32View<writable>, index: Nat) -> IO(Pair(F32View<writable>, F32)):
+  import "./python.c"
+
+def f32_write(view: F32View<True{}>, index: Nat, value: F32) -> IO(F32View<True{}>):
+  import "./python.c"
+
+def f32_modify(view: F32View<True{}>, index: Nat, function: F32 -> F32) -> IO(F32View<True{}>):
+  import "./python.c"
+
+def f32_release(-writable: Bool, view: F32View<writable>) -> IO(Unit):
+  import "./python.c"
+
+# Each affine step consumes one element and produces its value and successor.
+# The count comes from retained storage, rather than a caller-supplied length.
+def F32MapSteps(count: Nat) -> Type:
+  match count:
+    case 0n:
+      Unit
+    case 1n+pred:
+      F32 -> Pair(F32, F32MapSteps(pred))
+
+def f32_map(view: F32View<True{}>, producer: @count: Nat -> F32MapSteps(count)) -> IO(F32View<True{}>):
+  import "./python.c"
+
+# Reusable closed scalar callback; the native boundary rejects captured closures.
+# Tensor.map_inplace specializes templates to this storage-count-bounded effect.
+def f32_map_closed(view: F32View<True{}>, function: F32 -> F32) -> IO(F32View<True{}>):
+  import "./python.c"
+
+# Optional LP64 SciPy BLAS. Positive aligned vectors and Fortran matrices;
+# no implicit copies. Return every affine lease so the caller can release it.
+def blas_scale(view: F32View<True{}>, alpha: F32) -> IO(F32View<True{}>):
+  import "./python.c"
+
+def blas_dot(-left_mode: Bool, -right_mode: Bool, left: F32View<left_mode>, right: F32View<right_mode>) -> IO(Pair(F32View<left_mode>, Pair(F32View<right_mode>, F32))):
+  import "./python.c"
+
+def blas_axpy(-source_mode: Bool, source: F32View<source_mode>, target: F32View<True{}>, alpha: F32) -> IO(Pair(F32View<source_mode>, F32View<True{}>)):
+  import "./python.c"
+
+def blas_matmul(-left_mode: Bool, -right_mode: Bool, left: F32View<left_mode>, right: F32View<right_mode>, out: F32View<True{}>) -> IO(Pair(F32View<left_mode>, Pair(F32View<right_mode>, F32View<True{}>))):
+  import "./python.c"
