@@ -39,6 +39,16 @@ static _Thread_local BpRuntime* bp_current;
 #error "F32 narrowing relies on IEEE 754 double-to-float conversion."
 #endif
 
+#if defined(CID(blas_scale)) || defined(CID(blas_dot)) || defined(CID(blas_axpy)) || defined(CID(blas_matmul))
+#define BENDPY_HAS_BLAS 1
+typedef struct {
+  PyObject_HEAD
+  PyObject* modules[4];
+  PyObject* capsules[4];
+  void* functions[4];
+} BpBlasCache;
+#endif
+
 // An exported Bend function. Its fields are immutable after export, and its
 // captureless Term holds no heap reference, so any runtime instance may run it.
 typedef struct {
@@ -47,11 +57,10 @@ typedef struct {
   bool release_gil;
   PyObject* name;
   PyObject* module;
-} BpFunction;
-
-#if defined(CID(blas_scale)) || defined(CID(blas_dot)) || defined(CID(blas_axpy)) || defined(CID(blas_matmul))
-#define BENDPY_HAS_BLAS 1
+#ifdef BENDPY_HAS_BLAS
+  BpBlasCache* blas;
 #endif
+} BpFunction;
 typedef enum { BP_UNIT, BP_OBJECT, BP_U32, BP_F32, BP_BOOL, BP_STRING, BP_NAT, BP_BYTES,
   BP_F32_VIEW, BP_BLAS_DOT, BP_BLAS_AXPY, BP_BLAS_MATMUL } BpValue;
 // A decoded Bend list: object handles, String codepoints, or raw U32 words.
@@ -74,8 +83,7 @@ typedef struct {
   PyObject* view_exception;
   PyObject* module;
 #ifdef BENDPY_HAS_BLAS
-  PyObject* blas_module;
-  PyObject* blas_capsules[4];
+  BpBlasCache* blas;
   void* blas_functions[4];
 #endif
   Term continuation, argument, function, map_step;
@@ -761,10 +769,63 @@ static PyObject* bp_text(BpCall* call) {
 
 static PyObject* bp_call_python(PyObject*, PyObject*, PyObject*);
 
-static void bp_function_dealloc(PyObject* self) {
+#ifdef BENDPY_HAS_BLAS
+static int bp_blas_traverse(PyObject* self, visitproc visit, void* arg) {
+  BpBlasCache* cache = (BpBlasCache*)self;
+  for (int i = 0; i < 4; ++i) {
+    Py_VISIT(cache->modules[i]); Py_VISIT(cache->capsules[i]);
+  }
+  return 0;
+}
+
+static int bp_blas_clear(PyObject* self) {
+  BpBlasCache* cache = (BpBlasCache*)self;
+  memset(cache->functions, 0, sizeof(cache->functions));
+  for (int i = 0; i < 4; ++i) {
+    Py_CLEAR(cache->modules[i]); Py_CLEAR(cache->capsules[i]);
+  }
+  return 0;
+}
+
+static void bp_blas_dealloc(PyObject* self) {
+  PyObject_GC_UnTrack(self);
+  bp_blas_clear(self);
+  PyObject_GC_Del(self);
+}
+
+static PyTypeObject bp_blas_type = {
+  PyVarObject_HEAD_INIT(NULL, 0)
+  .tp_name = "bend_python.blas_cache",
+  .tp_basicsize = sizeof(BpBlasCache),
+  .tp_dealloc = bp_blas_dealloc,
+  .tp_flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC | Py_TPFLAGS_DISALLOW_INSTANTIATION,
+  .tp_traverse = bp_blas_traverse,
+  .tp_clear = bp_blas_clear,
+};
+#endif
+
+static int bp_function_traverse(PyObject* self, visitproc visit, void* arg) {
   BpFunction* function = (BpFunction*)self;
-  Py_XDECREF(function->name); Py_XDECREF(function->module);
-  PyObject_Free(self);
+  Py_VISIT(function->name); Py_VISIT(function->module);
+#ifdef BENDPY_HAS_BLAS
+  Py_VISIT(function->blas);
+#endif
+  return 0;
+}
+
+static int bp_function_clear(PyObject* self) {
+  BpFunction* function = (BpFunction*)self;
+  Py_CLEAR(function->name); Py_CLEAR(function->module);
+#ifdef BENDPY_HAS_BLAS
+  Py_CLEAR(function->blas);
+#endif
+  return 0;
+}
+
+static void bp_function_dealloc(PyObject* self) {
+  PyObject_GC_UnTrack(self);
+  bp_function_clear(self);
+  PyObject_GC_Del(self);
 }
 
 static PyObject* bp_function_name(PyObject* self, void* closure) {
@@ -804,7 +865,9 @@ static PyTypeObject bp_function_type = {
   .tp_dealloc = bp_function_dealloc,
   .tp_repr = bp_function_repr,
   .tp_call = bp_call_python,
-  .tp_flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_IMMUTABLETYPE | Py_TPFLAGS_DISALLOW_INSTANTIATION,
+  .tp_flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_IMMUTABLETYPE | Py_TPFLAGS_DISALLOW_INSTANTIATION | Py_TPFLAGS_HAVE_GC,
+  .tp_traverse = bp_function_traverse,
+  .tp_clear = bp_function_clear,
   .tp_doc = "A native Bend function.",
   .tp_methods = bp_function_methods,
   .tp_getset = bp_function_getset,
@@ -821,10 +884,14 @@ static bool bp_export(BpCall* call) {
     Py_DECREF(name); PyErr_SetString(PyExc_ValueError, "empty, duplicate, or NUL-containing export name"); return false;
   }
   PyObject* module_name = PyModule_GetNameObject(call->module);
-  BpFunction* function = module_name ? PyObject_New(BpFunction, &bp_function_type) : NULL;
+  BpFunction* function = module_name ? PyObject_GC_New(BpFunction, &bp_function_type) : NULL;
   if (!function) { Py_DECREF(name); Py_XDECREF(module_name); return false; }
   function->function = call->fields[1]; function->release_gil = call->fields[2];
   function->name = name; function->module = module_name;
+#ifdef BENDPY_HAS_BLAS
+  function->blas = (BpBlasCache*)Py_NewRef((PyObject*)call->blas);
+#endif
+  PyObject_GC_Track(function);
   int added = PyModule_AddObjectRef(call->module, text, (PyObject*)function);
   Py_DECREF(function);
   return added == 0;
@@ -863,7 +930,7 @@ static bool bp_borrow_f32(BpCall* call, PyObject* object, bool writable) {
           (span < 0 ? __builtin_add_overflow(low, span, &low) : __builtin_add_overflow(high, span, &high))) {
         error = "float32 stride offset overflow"; break;
       }
-      if (dimension > 1) {
+      if (writable && dimension > 1) {
         size_t absolute = stride < 0 ? (size_t)(-(stride + 1)) + 1 : (size_t)stride;
         int at = count++;
         while (at > 0 && axes[at - 1].stride > absolute) { axes[at] = axes[at - 1]; --at; }
@@ -905,7 +972,8 @@ static bool bp_borrow_f32(BpCall* call, PyObject* object, bool writable) {
 
 #ifdef BENDPY_HAS_BLAS
 // SciPy's public Cython BLAS API wraps the provider's Fortran ABI. Keep the
-// capsules and module alive for this invocation, including while detached.
+// first successfully validated capsule for each operation for the lifetime of
+// the module's exports. Failed resolutions remain retryable.
 static bool bp_blas_load(BpCall* call, int operation) {
   static const char* names[] = {"sscal", "sdot", "saxpy", "sgemm"};
   #define BP_SCIPY_FLOAT "__pyx_t_5scipy_6linalg_11cython_blas_s *"
@@ -917,24 +985,43 @@ static bool bp_blas_load(BpCall* call, int operation) {
   };
   #undef BP_SCIPY_FLOAT
   if (call->blas_functions[operation]) return true;
-  if (!call->blas_module) {
-    call->blas_module = PyImport_ImportModule("scipy.linalg.cython_blas");
-    if (!call->blas_module) return false;
-  }
-  PyObject* api = PyObject_GetAttrString(call->blas_module, "__pyx_capi__");
+  BpBlasCache* cache = call->blas;
+#ifdef Py_GIL_DISABLED
+  Py_BEGIN_CRITICAL_SECTION(cache);
+#endif
+  call->blas_functions[operation] = cache->functions[operation];
+#ifdef Py_GIL_DISABLED
+  Py_END_CRITICAL_SECTION();
+#endif
+  if (call->blas_functions[operation]) return true;
+  // Imports and attribute access can reenter; resolve outside the cache lock.
+  PyObject* module = PyImport_ImportModule("scipy.linalg.cython_blas");
+  if (!module) return false;
+  PyObject* api = PyObject_GetAttrString(module, "__pyx_capi__");
   PyObject* capsule = api ? PyMapping_GetItemString(api, names[operation]) : NULL;
   Py_XDECREF(api);
-  if (!capsule) return false;
+  if (!capsule) { Py_DECREF(module); return false; }
   const char* signature = PyCapsule_CheckExact(capsule) ? PyCapsule_GetName(capsule) : NULL;
   if (!signature || strcmp(signature, signatures[operation]) != 0) {
-    Py_DECREF(capsule);
+    Py_DECREF(capsule); Py_DECREF(module);
     PyErr_SetString(PyExc_ImportError, "unsupported SciPy BLAS capsule ABI; an LP64 SciPy build is required");
     return false;
   }
   void* function = PyCapsule_GetPointer(capsule, signatures[operation]);
-  if (!function) { Py_DECREF(capsule); return false; }
-  call->blas_capsules[operation] = capsule;
-  call->blas_functions[operation] = function;
+  if (!function) { Py_DECREF(capsule); Py_DECREF(module); return false; }
+#ifdef Py_GIL_DISABLED
+  Py_BEGIN_CRITICAL_SECTION(cache);
+#endif
+  if (!cache->functions[operation]) {
+    cache->modules[operation] = module; module = NULL;
+    cache->capsules[operation] = capsule; capsule = NULL;
+    cache->functions[operation] = function;
+  }
+  call->blas_functions[operation] = cache->functions[operation];
+#ifdef Py_GIL_DISABLED
+  Py_END_CRITICAL_SECTION();
+#endif
+  Py_XDECREF(capsule); Py_XDECREF(module);
   return true;
 }
 
@@ -1313,10 +1400,6 @@ static PyObject* bp_run(BpCall* call, BpOperation start) {
   for (size_t i = 0; i < call->view_count; ++i)
     if (call->views[i].live) PyBuffer_Release(&call->views[i].buffer);
   PyMem_Free(call->views);
-#ifdef BENDPY_HAS_BLAS
-  for (int i = 0; i < 4; ++i) Py_XDECREF(call->blas_capsules[i]);
-  Py_XDECREF(call->blas_module);
-#endif
   for (size_t i = 0; i < call->count; ++i) Py_DECREF(call->objects[i]);
   PyMem_Free(call->objects);
   return result;
@@ -1332,6 +1415,9 @@ static PyObject* bp_call_python(PyObject* self, PyObject* args, PyObject* kwargs
   BpFunction* entry = (BpFunction*)self;
   BpCall call = { .function = entry->function, .release_gil = entry->release_gil,
     .nargs = (size_t)PyTuple_Size(args) };
+#ifdef BENDPY_HAS_BLAS
+  call.blas = entry->blas;
+#endif
   for (size_t i = 0; i < call.nargs; ++i) {
     if (!bp_add(&call, Py_NewRef(PyTuple_GetItem(args, i)))) goto fail;
   }
@@ -1356,13 +1442,23 @@ PyMODINIT_FUNC BENDPY_INIT(void) {
     PyErr_SetString(PyExc_ImportError, "Bend currently supports only the main Python interpreter"); return NULL;
   }
   if (PyType_Ready(&bp_function_type) < 0) return NULL;
+#ifdef BENDPY_HAS_BLAS
+  if (PyType_Ready(&bp_blas_type) < 0) return NULL;
+#endif
   PyObject* module = PyModule_Create(&bp_definition);
   if (!module) return NULL;
 #ifdef Py_GIL_DISABLED
   PyUnstable_Module_SetGIL(module, Py_MOD_GIL_NOT_USED);
 #endif
   BpCall call = { .module = module };
+#ifdef BENDPY_HAS_BLAS
+  call.blas = (BpBlasCache*)PyType_GenericAlloc(&bp_blas_type, 0);
+  if (!call.blas) { Py_DECREF(module); return NULL; }
+#endif
   PyObject* result = bp_run(&call, BP_INIT);
+#ifdef BENDPY_HAS_BLAS
+  Py_DECREF(call.blas);
+#endif
   Py_DECREF(module);
   return result;
 }

@@ -122,6 +122,10 @@ uv pip install --python .venv/bin/python --no-build-isolation -e '.[blas]'
 The extra installs SciPy; the backend lazily obtains function pointers from
 the public `scipy.linalg.cython_blas` capsules. It needs an LP64 SciPy build,
 such as the usual wheels. ILP64 signatures are rejected before invocation.
+The exports share a lazy cache of the first successfully validated capsule and
+supplying module for each operation. Failed lookups can be retried; replacing
+`__pyx_capi__` or `sys.modules` after a successful binding does not replace it.
+No scientific package is imported just to load an extension.
 Do not use private NumPy symbols, assume a provider's direct Fortran ABI, or
 cast an unvalidated capsule to a guessed function type. Building exports
 requires no scientific headers or BLAS linker flags.

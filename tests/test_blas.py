@@ -70,6 +70,97 @@ class OptionalDependencyTests(unittest.TestCase):
 
 @unittest.skipUnless(SCIPY, "SciPy BLAS is an optional dependency")
 class BlasBufferTests(unittest.TestCase):
+    def test_capsule_cache_retries_and_shares_validated_bindings(self):
+        script = textwrap.dedent("""\
+            import array
+            from concurrent.futures import ThreadPoolExecutor
+            import gc
+            import sys
+            import threading
+            import types
+            import weakref
+            import bend_example as b
+            import scipy.linalg.cython_blas as backend
+
+            original = backend.__pyx_capi__
+            lookups = []
+            ready = threading.Barrier(8)
+            valid = False
+            class Api:
+                def __getitem__(self, name):
+                    lookups.append(name)
+                    if name == 'sscal' and not valid:
+                        return original['sdot']  # Real capsule, incompatible ABI.
+                    if name == 'sdot':
+                        # Resolution must permit reentry and concurrent misses.
+                        nested = array.array('f', [3])
+                        b.blas_scale(2.0, nested)
+                        assert list(nested) == [6]
+                        ready.wait(timeout=30)
+                    return original[name]
+            backend.__pyx_capi__ = Api()
+            x = array.array('f', [2, -3])
+            try:
+                b.blas_scale(4.0, x)
+            except ImportError:
+                pass
+            else:
+                raise AssertionError('incompatible capsule ABI was accepted')
+            assert list(x) == [2, -3]
+            valid = True
+            assert b.blas_scale(4.0, x) is x
+            assert list(x) == [8, -12]
+
+            def dot(seed):
+                values = array.array('f', [seed, 1])
+                return b.blas_dot(values, values)
+            with ThreadPoolExecutor(max_workers=8) as workers:
+                assert list(workers.map(dot, range(8))) == [i*i + 1 for i in range(8)]
+            assert lookups.count('sscal') == 2
+            assert lookups.count('sdot') == 8
+            # Successfully bound operations keep their original validated ABI.
+            backend.__pyx_capi__ = {}
+            assert b.blas_scale(-1.0, x) is x
+            assert list(x) == [-8, 12]
+            assert b.blas_dot(x, x) == 208
+            try:
+                b.blas_axpy(2.0, x, array.array('f', [5, 7]))
+            except KeyError:
+                pass
+            else:
+                raise AssertionError('missing capsule lookup did not propagate')
+            backend.__pyx_capi__ = original
+            y = array.array('f', [5, 7])
+            assert b.blas_axpy(2.0, x, y) is y
+            assert list(y) == [-11, 31]
+            assert lookups.count('sscal') == 2 and lookups.count('sdot') == 8
+
+            # Retain the supplying module as well as its capsule after sys.modules
+            # replacement; native code can remain live after its exports change.
+            name = 'scipy.linalg.cython_blas'
+            supplied = types.ModuleType(name)
+            supplied.__pyx_capi__ = original
+            reference = weakref.ref(supplied)
+            sys.modules[name] = supplied
+            def matrix(values):
+                return memoryview(array.array('f', values)).cast('B').cast('f', shape=(1, 1))
+            out = matrix([19])
+            assert b.blas_matmul(matrix([3]), matrix([7]), out) is out
+            assert out.tolist() == [[21]]
+            sys.modules[name] = backend
+            del supplied
+            gc.collect()
+            assert reference() is not None
+            """)
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=MODULE_DIRECTORY,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_stdlib_buffers_and_readonly_dot(self):
         x = array.array("f", [2, -3, 5])
         y = array.array("f", [-7, 11, 13])
