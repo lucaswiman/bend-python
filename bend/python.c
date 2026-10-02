@@ -49,7 +49,11 @@ typedef struct {
   PyObject* module;
 } BpFunction;
 
-typedef enum { BP_UNIT, BP_OBJECT, BP_U32, BP_F32, BP_BOOL, BP_STRING, BP_NAT, BP_BYTES, BP_F32_VIEW } BpValue;
+#if defined(CID(blas_scale)) || defined(CID(blas_dot)) || defined(CID(blas_axpy)) || defined(CID(blas_matmul))
+#define BENDPY_HAS_BLAS 1
+#endif
+typedef enum { BP_UNIT, BP_OBJECT, BP_U32, BP_F32, BP_BOOL, BP_STRING, BP_NAT, BP_BYTES,
+  BP_F32_VIEW, BP_BLAS_DOT, BP_BLAS_AXPY, BP_BLAS_MATMUL } BpValue;
 // A decoded Bend list: object handles, String codepoints, or raw U32 words.
 typedef enum { BP_READ_OBJECTS, BP_READ_TEXT, BP_READ_WORDS } BpRead;
 typedef enum { BP_INIT, BP_START, BP_RESUME, BP_DROP } BpOperation;
@@ -69,6 +73,11 @@ typedef struct {
   const char* view_error;
   PyObject* view_exception;
   PyObject* module;
+#ifdef BENDPY_HAS_BLAS
+  PyObject* blas_module;
+  PyObject* blas_capsules[4];
+  void* blas_functions[4];
+#endif
   Term continuation, argument, function, map_step;
   size_t map_view, map_remaining;
   Term fields[5];
@@ -268,6 +277,16 @@ static Term bp_pack(Env e, BpCall* call) {
 #ifdef CID(F32View)
     case BP_F32_VIEW: return term_pak(CID(F32View), bp_seal(call->key ^ 0x66333276696577ull, (u32)call->result));
 #endif
+#ifdef BENDPY_HAS_BLAS
+    case BP_BLAS_DOT:
+      return io_tup(e, term_pak(CID(F32View), (u32)call->fields[0]),
+        io_tup(e, term_pak(CID(F32View), (u32)call->fields[1]), (Term)call->result));
+    case BP_BLAS_AXPY:
+      return io_tup(e, term_pak(CID(F32View), (u32)call->fields[0]), term_pak(CID(F32View), (u32)call->fields[1]));
+    case BP_BLAS_MATMUL:
+      return io_tup(e, term_pak(CID(F32View), (u32)call->fields[0]),
+        io_tup(e, term_pak(CID(F32View), (u32)call->fields[1]), term_pak(CID(F32View), (u32)call->fields[2])));
+#endif
     case BP_BOOL: return term_pak(call->result ? CID(True) : CID(False), 0);
     case BP_STRING:
     case BP_BYTES: {
@@ -409,6 +428,22 @@ static void bp_decode(Env e, BpCall* call) {
       if (term_tag(f[2]) != TAG_CLO || term_loc(f[2]) != 0)
         bendpy_panic("float32 modifiers require a captureless function; use a template");
       break;
+#endif
+#ifdef CID(blas_scale)
+    case CID(blas_scale): f[0] = bp_unbox_as(e, f[0], CID(F32View)); break;
+#endif
+#ifdef CID(blas_dot)
+    case CID(blas_dot):
+#endif
+#ifdef CID(blas_axpy)
+    case CID(blas_axpy):
+#endif
+#if defined(CID(blas_dot)) || defined(CID(blas_axpy))
+      f[0] = bp_unbox_as(e, f[0], CID(F32View)); f[1] = bp_unbox_as(e, f[1], CID(F32View)); break;
+#endif
+#ifdef CID(blas_matmul)
+    case CID(blas_matmul):
+      for (int i = 0; i < 3; ++i) f[i] = bp_unbox_as(e, f[i], CID(F32View)); break;
 #endif
     default: bendpy_panic("unsupported foreign effect in Python extension");
   }
@@ -864,12 +899,185 @@ static bool bp_borrow_f32(BpCall* call, PyObject* object, bool writable) {
 }
 #endif
 
+#ifdef BENDPY_HAS_BLAS
+// SciPy's public Cython BLAS API wraps the provider's Fortran ABI. Keep the
+// capsules and module alive for this invocation, including while detached.
+static bool bp_blas_load(BpCall* call, int operation) {
+  static const char* names[] = {"sscal", "sdot", "saxpy", "sgemm"};
+  #define BP_SCIPY_FLOAT "__pyx_t_5scipy_6linalg_11cython_blas_s *"
+  static const char* signatures[] = {
+    "void (int *, " BP_SCIPY_FLOAT ", " BP_SCIPY_FLOAT ", int *)",
+    "__pyx_t_5scipy_6linalg_11cython_blas_s (int *, " BP_SCIPY_FLOAT ", int *, " BP_SCIPY_FLOAT ", int *)",
+    "void (int *, " BP_SCIPY_FLOAT ", " BP_SCIPY_FLOAT ", int *, " BP_SCIPY_FLOAT ", int *)",
+    "void (char *, char *, int *, int *, int *, " BP_SCIPY_FLOAT ", " BP_SCIPY_FLOAT ", int *, " BP_SCIPY_FLOAT ", int *, " BP_SCIPY_FLOAT ", " BP_SCIPY_FLOAT ", int *)"
+  };
+  #undef BP_SCIPY_FLOAT
+  if (call->blas_functions[operation]) return true;
+  if (!call->blas_module) {
+    call->blas_module = PyImport_ImportModule("scipy.linalg.cython_blas");
+    if (!call->blas_module) return false;
+  }
+  PyObject* api = PyObject_GetAttrString(call->blas_module, "__pyx_capi__");
+  PyObject* capsule = api ? PyMapping_GetItemString(api, names[operation]) : NULL;
+  Py_XDECREF(api);
+  if (!capsule) return false;
+  const char* signature = PyCapsule_CheckExact(capsule) ? PyCapsule_GetName(capsule) : NULL;
+  if (!signature || strcmp(signature, signatures[operation]) != 0) {
+    Py_DECREF(capsule);
+    PyErr_SetString(PyExc_ImportError, "unsupported SciPy BLAS capsule ABI; an LP64 SciPy build is required");
+    return false;
+  }
+  void* function = PyCapsule_GetPointer(capsule, signatures[operation]);
+  if (!function) { Py_DECREF(capsule); return false; }
+  call->blas_capsules[operation] = capsule;
+  call->blas_functions[operation] = function;
+  return true;
+}
+
+static bool bp_blas_int(Py_ssize_t value, int* result) {
+  if (value < 0 || value > INT_MAX) {
+    PyErr_SetString(PyExc_OverflowError, "BLAS dimension, increment, or leading dimension exceeds LP64 range");
+    return false;
+  }
+  *result = (int)value;
+  return true;
+}
+
+// Only positive aligned strides enter BLAS. Empty storage has no address or
+// layout requirement; give its unused native increment/leading dimension 1.
+static bool bp_blas_layout(BpView* view, bool matrix, int* rows, int* cols, int* step) {
+  Py_buffer* b = &view->buffer;
+  if (b->ndim != (matrix ? 2 : 1)) {
+    PyErr_SetString(PyExc_BufferError, "BLAS expects a vector or matrix of the specified rank");
+    return false;
+  }
+  if (!bp_blas_int(b->shape[0], rows) || (matrix && !bp_blas_int(b->shape[1], cols))) return false;
+  *step = 1;
+  if (!view->size) return true;
+  if ((uintptr_t)b->buf % _Alignof(float)) {
+    PyErr_SetString(PyExc_BufferError, "BLAS requires aligned float32 storage"); return false;
+  }
+  Py_ssize_t stride = b->strides ? b->strides[matrix ? 1 : 0] : sizeof(float);
+  if (matrix) {
+    Py_ssize_t row_stride = b->strides ? b->strides[0] : (Py_ssize_t)*cols * sizeof(float);
+    if (*rows > 1 && row_stride != sizeof(float)) {
+      PyErr_SetString(PyExc_BufferError, "BLAS matrices require Fortran layout; no implicit copies"); return false;
+    }
+    if (*cols == 1) stride = (Py_ssize_t)*rows * sizeof(float);
+  }
+  if (stride <= 0 || stride % sizeof(float) || (matrix && stride / (Py_ssize_t)sizeof(float) < *rows)) {
+    PyErr_SetString(PyExc_BufferError, "BLAS requires positive float32 strides and valid leading dimensions");
+    return false;
+  }
+  return bp_blas_int(stride / sizeof(float), step);
+}
+
+// Conservatively reject intersecting storage spans, including gaps between
+// strided elements. BLAS does not guarantee results for aliased destinations.
+static bool bp_blas_disjoint(BpView* left, int lr, int lc, int ls,
+                             BpView* right, int rr, int rc, int rs, bool matrix) {
+  if (!left->size || !right->size) return true;
+  uintptr_t l = (uintptr_t)left->buffer.buf, r = (uintptr_t)right->buffer.buf;
+  size_t ln = matrix ? (size_t)(lc - 1) * ls + lr : (size_t)(lr - 1) * ls + 1;
+  size_t rn = matrix ? (size_t)(rc - 1) * rs + rr : (size_t)(rr - 1) * rs + 1;
+  uintptr_t le, re;
+  if (__builtin_add_overflow(l, ln * sizeof(float), &le) ||
+      __builtin_add_overflow(r, rn * sizeof(float), &re)) {
+    PyErr_SetString(PyExc_OverflowError, "BLAS storage address overflow"); return false;
+  }
+  if (l < re && r < le) {
+    PyErr_SetString(PyExc_BufferError, "BLAS destination must not overlap an input storage span"); return false;
+  }
+  return true;
+}
+
+static bool bp_blas(BpCall* call, int operation) {
+  int count = operation == 0 ? 1 : operation == 3 ? 3 : 2;
+  BpView* views[3];
+  int rows[3] = {0}, cols[3] = {0}, steps[3] = {0};
+  bool matrix = operation == 3;
+  for (int i = 0; i < count; ++i) {
+    views[i] = bp_view(call, call->fields[i]);
+    if (!views[i]) { PyErr_SetString(call->view_exception, call->view_error); return false; }
+    if (!bp_blas_layout(views[i], matrix, &rows[i], &cols[i], &steps[i])) return false;
+  }
+  int destination = operation == 0 ? 0 : operation == 2 ? 1 : 2;
+  if (operation != 1 && !bp_writable(call, views[destination])) {
+    PyErr_SetString(call->view_exception, call->view_error); return false;
+  }
+  if ((operation == 1 || operation == 2) && rows[0] != rows[1]) {
+    PyErr_SetString(PyExc_BufferError, "BLAS vector lengths must match"); return false;
+  }
+  if (matrix && (cols[0] != rows[1] || rows[0] != rows[2] || cols[1] != cols[2])) {
+    PyErr_SetString(PyExc_BufferError, "BLAS matrix dimensions must match"); return false;
+  }
+  if (operation == 2 && !bp_blas_disjoint(views[0], rows[0], 0, steps[0], views[1], rows[1], 0, steps[1], false)) return false;
+  if (matrix) {
+    for (int i = 0; i < 2; ++i)
+      if (!bp_blas_disjoint(views[i], rows[i], cols[i], steps[i], views[2], rows[2], cols[2], steps[2], true)) return false;
+  }
+  if (!bp_blas_load(call, operation)) return false;
+  float alpha = 1.0f, beta = 0.0f, value = 0.0f;
+  if (operation == 0 || operation == 2) {
+    u32 bits = (u32)call->fields[operation == 0 ? 1 : 2];
+    memcpy(&alpha, &bits, sizeof(alpha));
+  }
+  // Every pointer is backed by a retained Py_buffer. No Python/runtime API is
+  // called while detached; callers synchronize concurrent access to storage.
+  PyThreadState* state = call->release_gil ? PyEval_SaveThread() : NULL;
+  if (operation == 0 && rows[0]) {
+    typedef void (*Scale)(int*, float*, float*, int*);
+    ((Scale)call->blas_functions[0])(&rows[0], &alpha, views[0]->buffer.buf, &steps[0]);
+  } else if (operation == 1 && rows[0]) {
+    typedef float (*Dot)(int*, float*, int*, float*, int*);
+    value = ((Dot)call->blas_functions[1])(&rows[0], views[0]->buffer.buf, &steps[0], views[1]->buffer.buf, &steps[1]);
+  } else if (operation == 2 && rows[0]) {
+    typedef void (*Axpy)(int*, float*, float*, int*, float*, int*);
+    ((Axpy)call->blas_functions[2])(&rows[0], &alpha, views[0]->buffer.buf, &steps[0], views[1]->buffer.buf, &steps[1]);
+  } else if (matrix && rows[2] && cols[2]) {
+    if (cols[0]) {
+      typedef void (*Matmul)(char*, char*, int*, int*, int*, float*, float*, int*, float*, int*, float*, float*, int*);
+      char no = 'N';
+      ((Matmul)call->blas_functions[3])(&no, &no, &rows[2], &cols[2], &cols[0], &alpha,
+        views[0]->buffer.buf, &steps[0], views[1]->buffer.buf, &steps[1], &beta, views[2]->buffer.buf, &steps[2]);
+    } else {
+      // K=0 must clear C, even if an implementation's quick return skips it.
+      float* out = views[2]->buffer.buf;
+      for (int j = 0; j < cols[2]; ++j)
+        for (int i = 0; i < rows[2]; ++i) out[(size_t)j * steps[2] + i] = 0.0f;
+    }
+  }
+  if (state) PyEval_RestoreThread(state);
+  if (PyErr_CheckSignals() < 0) return false;
+  if (operation == 0) {
+    call->result_kind = BP_F32_VIEW; call->result = (size_t)(views[0] - call->views);
+  } else if (operation == 1) {
+    call->result_kind = BP_BLAS_DOT;
+    u32 bits; memcpy(&bits, &value, sizeof(bits)); call->result = bits;
+  } else call->result_kind = matrix ? BP_BLAS_MATMUL : BP_BLAS_AXPY;
+  return true;
+}
+#endif
+
+
 static bool bp_effect(BpCall* call) {
   bp_assert_attached();
   Term* f = call->fields;
   PyObject *a = NULL, *b = NULL, *c = NULL, *result = NULL;
   call->result_kind = BP_UNIT;
   switch (call->effect) {
+#ifdef CID(blas_scale)
+    case CID(blas_scale): return bp_blas(call, 0);
+#endif
+#ifdef CID(blas_dot)
+    case CID(blas_dot): return bp_blas(call, 1);
+#endif
+#ifdef CID(blas_axpy)
+    case CID(blas_axpy): return bp_blas(call, 2);
+#endif
+#ifdef CID(blas_matmul)
+    case CID(blas_matmul): return bp_blas(call, 3);
+#endif
 #ifdef CID(export)
     case CID(export): return bp_export(call);
 #endif
@@ -1101,6 +1309,10 @@ static PyObject* bp_run(BpCall* call, BpOperation start) {
   for (size_t i = 0; i < call->view_count; ++i)
     if (call->views[i].live) PyBuffer_Release(&call->views[i].buffer);
   PyMem_Free(call->views);
+#ifdef BENDPY_HAS_BLAS
+  for (int i = 0; i < 4; ++i) Py_XDECREF(call->blas_capsules[i]);
+  Py_XDECREF(call->blas_module);
+#endif
   for (size_t i = 0; i < call->count; ++i) Py_DECREF(call->objects[i]);
   PyMem_Free(call->objects);
   return result;

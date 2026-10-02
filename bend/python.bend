@@ -255,3 +255,17 @@ def F32MapSteps(count: Nat) -> Type:
 
 def f32_map(view: F32View<True{}>, producer: @count: Nat -> F32MapSteps(count)) -> IO(F32View<True{}>):
   import "./python.c"
+
+# Optional LP64 SciPy BLAS. Positive aligned vectors and Fortran matrices;
+# no implicit copies. Return every affine lease so the caller can release it.
+def blas_scale(view: F32View<True{}>, alpha: F32) -> IO(F32View<True{}>):
+  import "./python.c"
+
+def blas_dot(-left_mode: Bool, -right_mode: Bool, left: F32View<left_mode>, right: F32View<right_mode>) -> IO(Pair(F32View<left_mode>, Pair(F32View<right_mode>, F32))):
+  import "./python.c"
+
+def blas_axpy(-source_mode: Bool, source: F32View<source_mode>, target: F32View<True{}>, alpha: F32) -> IO(Pair(F32View<source_mode>, F32View<True{}>)):
+  import "./python.c"
+
+def blas_matmul(-left_mode: Bool, -right_mode: Bool, left: F32View<left_mode>, right: F32View<right_mode>, out: F32View<True{}>) -> IO(Pair(F32View<left_mode>, Pair(F32View<right_mode>, F32View<True{}>))):
+  import "./python.c"

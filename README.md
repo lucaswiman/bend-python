@@ -240,6 +240,64 @@ allocated. Strided access takes work proportional to rank per element, and
 Bend's per-element driver can be substantially slower than NumPy/PyTorch
 vectorized kernels; benchmark your actual algorithm.
 
+## Optional bulk BLAS
+
+Install `bend-python[blas]` to use SciPy's public
+[`cython_blas` API](https://docs.scipy.org/doc/scipy/reference/linalg.cython_blas.html)
+on borrowed float32 storage. The base SDK has no runtime dependencies;
+NumPy, PyTorch and SciPy are imported only when their adapters need them.
+Building an extension that exports BLAS functions needs no SciPy headers,
+BLAS linker flags or scientific packages. Calling those functions requires an
+LP64 SciPy build (the usual wheels); ILP64 capsules are rejected before use.
+
+```bend
+import Base
+import ./bend/blas.bend as Blas
+
+def main() -> IO(Unit):
+  do IO<Unit>:
+    Blas.export_scale("scale", True{})
+    Blas.export_dot("dot", True{})
+    Blas.export_axpy("axpy", True{})
+    Blas.export_matmul("matmul", True{})
+```
+
+| Python call | Result |
+|---|---|
+| `scale(2.0, x)` | Scales `x` in place and returns the original `x` |
+| `dot(x, y)` | Returns a float32 dot product as a Python float |
+| `axpy(2.0, x, y)` | Sets `y += 2*x` and returns the original `y` |
+| `matmul(a, b, out)` | Sets `out = a @ b` and returns the original `out` |
+
+All arguments are positional; coefficients must be Python floats. Vectors
+have rank one and positive strides in whole float32 elements. Matrices have
+rank two and Fortran layout: consecutive rows, with optional padding between
+columns. For example, create `out = np.empty((m, n), dtype=np.float32,
+order="F")` once and reuse it. Ordinary row-major matrices require an explicit
+caller conversion. Storage must be aligned, and dimensions, increments and
+leading dimensions must fit a signed 32-bit BLAS integer. Empty dimensions are
+accepted; a zero inner dimension fills the output with zeros.
+
+Inputs may be read-only. Outputs must be writable and their storage spans
+must not intersect any input span, including gaps in strided views. Validation
+finishes before the kernel writes. The bridge passes retained buffer pointers
+directly to BLAS, without allocating or copying array elements; the BLAS
+provider may use its own working memory. The usual borrow synchronization
+rules apply. Kernels follow the export's GIL policy and check cancellation
+after returning; a completed kernel's writes remain if cancellation raises.
+The provider may use multiple CPU threads.
+
+`export_torch_scale`, `export_torch_dot`, `export_torch_axpy` and
+`export_torch_matmul` use the same CPU/autograd restrictions and version
+notification as the tensor adapter. A transpose of a contiguous rank-two
+tensor has the required column-major layout.
+
+For custom Bend programs, `Python.blas_scale`, `blas_dot`, `blas_axpy` and
+`blas_matmul` consume affine `F32View` arguments and return every live view,
+plus the scalar for dot. Release the returned views when finished. Shape laws
+prove the pure logical dimension policy; buffer metadata, capsule ABI, native
+arithmetic and resource handling remain tested, trusted boundaries.
+
 ## Threads and the GIL
 
 Every call runs in its own Bend runtime instance (heap, stack and allocator),
@@ -265,6 +323,10 @@ The build refuses to compile unless every law checks:
   advancement and decreasing remaining work. These are proofs of the Bend
   program and arithmetic model, not the C traversal
   ([`bend/TENSOR_LAWS.bend`](https://github.com/lucaswiman/bend-python/blob/main/bend/TENSOR_LAWS.bend)).
+- **BLAS dimensions.** Exact vector/matrix ranks, acceptance of matching shapes,
+  equal vector lengths, and all three matrix-product dimension equations
+  ([`bend/BLAS_LAWS.bend`](https://github.com/lucaswiman/bend-python/blob/main/bend/BLAS_LAWS.bend)).
+  These pure metadata laws do not prove the BLAS implementation or C checks.
 - **Thread protocol.** A model of the C driver proves that Python operations
   happen only while attached and never during native evaluation, that every
   call returns attached (failures included), and that free-threaded builds
@@ -292,6 +354,7 @@ its evidence:
 | Exports cannot capture variables | Checked by C at import; test |
 | Objects cross unchanged; conversions are strict | C; tests |
 | Borrowed arrays retain storage identity, respect strides, clean up on failure, and notify PyTorch | C/Python integration; real NumPy, PyTorch, buffer, reentrancy and cancellation tests |
+| Optional BLAS preserves layouts and checks dimensions/aliasing before writes | Pure shape laws; real SciPy/NumPy/PyTorch kernels and rejection tests; capsule ABI and arithmetic trusted |
 
 ## Limits
 

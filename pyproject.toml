@@ -31,6 +31,9 @@ classifiers = [
     "Topic :: Software Development :: Compilers",
 ]
 
+[project.optional-dependencies]
+blas = ["scipy>=1.14"]
+
 [project.urls]
 Homepage = "https://github.com/lucaswiman/bend-python"
 Source = "https://github.com/lucaswiman/bend-python"
