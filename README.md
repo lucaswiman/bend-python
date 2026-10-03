@@ -248,6 +248,10 @@ per-cell division. Random indexed access still takes work proportional to rank.
 Bend's scalar callbacks can be slower than NumPy/PyTorch vectorized kernels;
 benchmark your actual algorithm.
 
+[`benchmarks/`](benchmarks/README.md) compares NumPy and PyTorch CPU/CUDA
+operations with Bend maps, optional BLAS and Python kernel dispatch. It verifies
+P-core affinity and host/GPU congestion before recording synchronized timings.
+
 ## Optional bulk BLAS
 
 Install `bend-python[blas]` to use SciPy's public

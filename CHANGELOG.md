@@ -9,6 +9,9 @@ when its version has a section below.
 
 ### Added
 
+- Reproducible NumPy and PyTorch CPU/CUDA numerical benchmarks, with verified
+  P-core affinity, congestion gates, synchronized CUDA measurements, and
+  per-case correctness, storage identity and memory diagnostics.
 - An agent skill, `skills/bend-python`, installable with
   `gh skill install lucaswiman/bend-python bend-python`: setup, the build, the
   Python interface and its guarantees, Bend 2's checker rules with fixes, and
