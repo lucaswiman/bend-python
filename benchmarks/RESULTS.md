@@ -57,9 +57,9 @@ preserved, and that case passed a separate fresh-preflight retry.
 These tables report seven-sample medians, not a causal overhead estimate.
 Raw samples and variability are retained in the local result directories:
 
-- [Single-core CPU/CUDA report](results/initial-20261002-cpu6/REPORT.md)
-- [Eight-core report before the final refusal](results/initial-20261002-pcores8/REPORT.md)
-- [Final eight-core case retry](results/initial-20261002-pcores8/retry-result.json)
+- Single-core CPU/CUDA: `results/initial-20261002-cpu6/REPORT.md`
+- Eight-core report before the final refusal: `results/initial-20261002-pcores8/REPORT.md`
+- Final eight-core case retry: `results/initial-20261002-pcores8/retry-result.json`
 
 Raw results are ignored by Git; this summary records the measured medians.
 Warmed single-core timing increased peak RSS by at most 0.219 MiB and showed

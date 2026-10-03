@@ -32,6 +32,15 @@ Bend or SDK source. The runner records both source hashes and the loaded native
 extension's path/hash; these identify artifacts, not a proof of correspondence.
 Scientific dependencies are benchmark dependencies only.
 
+Run the benchmark unit tests separately from the SDK wheel tests:
+
+```sh
+/tmp/bend-numerical-benchmark-venv/bin/python -m unittest discover -s benchmarks/tests
+```
+
+CI runs these tests with NumPy; they exercise validation and host fixtures
+without timed workloads, PyTorch, a GPU, or an Intel hybrid CPU.
+
 ## Run on verified P cores
 
 The runner reads Linux's hybrid `cpu_core` PMU mask and physical-core sibling

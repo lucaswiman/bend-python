@@ -112,17 +112,17 @@ def measure(call, synchronize, *, samples, target_seconds, cuda, torch):
     one_seconds = (time.perf_counter_ns() - start) / 1e9
     calls += 1
     iterations = max(1, min(10000, math.ceil(target_seconds / one_seconds)))
-    rss_before = cpu_rss()
     if cuda:
-        torch.cuda.reset_peak_memory_stats()
-        cuda_before = torch.cuda.memory_allocated()
-        cuda_reserved_before = torch.cuda.memory_reserved()
         start_event = torch.cuda.Event(enable_timing=True)
         end_event = torch.cuda.Event(enable_timing=True)
         # Initialize events outside both timing and allocation measurements.
         start_event.record()
         end_event.record()
         end_event.synchronize()
+        torch.cuda.reset_peak_memory_stats()
+        cuda_before = torch.cuda.memory_allocated()
+        cuda_reserved_before = torch.cuda.memory_reserved()
+    rss_before = cpu_rss()
     wall_samples, event_samples = [], []
     for _ in range(samples):
         synchronize()
@@ -471,12 +471,19 @@ def main():
             )
             # CUDA-visible ordinal is zero, but preflight uses the physical index.
             command = [sys.executable, str(DIRECTORY / "run.py"), "--worker", json.dumps(config)]
-            result = subprocess.run(
-                command, capture_output=True, text=True, env=environment, cwd=DIRECTORY, timeout=600
-            )
-            (args.output / f"worker-{number:03d}.stderr").write_text(result.stderr)
+            stderr_path = args.output / f"worker-{number:03d}.stderr"
+            with stderr_path.open("w") as stderr:
+                result = subprocess.run(
+                    command,
+                    stdout=subprocess.PIPE,
+                    stderr=stderr,
+                    text=True,
+                    env=environment,
+                    cwd=DIRECTORY,
+                    timeout=600,
+                )
             if result.returncode:
-                sys.exit(f"Worker failed for {case}: {result.stderr}")
+                sys.exit(f"Worker failed for {case}: {stderr_path.read_text()}")
             row = json.loads(result.stdout)
             stream.write(json.dumps(row) + "\n")
             stream.flush()

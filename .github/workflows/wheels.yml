@@ -40,6 +40,15 @@ jobs:
       - name: The SDK wheel must stay pure Python
         run: ls dist/bend_python-*-py3-none-any.whl
 
+  benchmark-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
+      - name: Check benchmark validation and Linux host fixtures
+        run: uv run --no-project --python 3.14 --with numpy==2.5.3 python -m unittest discover -s benchmarks/tests
+
   tensors:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
