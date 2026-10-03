@@ -7,3 +7,5 @@ wheelhouse/
 *.so
 __pycache__/
 /examples/bend/
+/benchmarks/bend/
+/benchmarks/results/
