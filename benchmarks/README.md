@@ -6,6 +6,9 @@ PyTorch directly with the same PyTorch callable dispatched through Bend.
 CUDA data stays on the GPU; Bend's borrowed-buffer and BLAS APIs remain CPU-only.
 The benchmark does not implement a Bend CUDA kernel.
 
+[Initial results on this box](RESULTS.md) include one/eight-P-core CPU runs and
+GPU-resident CUDA timings, with the measured configuration and limitations.
+
 ## Build
 
 Use an isolated environment so the CUDA wheel does not replace another
