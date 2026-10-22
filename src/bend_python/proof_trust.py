@@ -13,30 +13,76 @@ import re
 
 # Reviewed SDK PROOF root; application roots need their own explicit policy.
 # This is the imported foreign closure, not the application's old 69-name list.
-_PYTHON_FOREIGN = tuple(
-    """
-python.export python.require_no_kwargs python.to_u32 python.from_u32
-python.to_f32 python.from_f32 python.to_string python.from_string
-python.to_bool python.from_bool python.get_item python.set_item python.getattr
-python.call python.invoke python.identical python.builtins python.none
-python.empty_dict python.tuple python.list python.len python.from_nat
-python.type_error python.truthy python.to_bytes python.from_bytes
-python.import_module python.construct python.fill_dict python.dict
-python.require_singleton python.require_pair python.unary python.binary
-python.invoke_unary python.invoke_binary_u32_values python.invoke_binary_u32
-python.export_u32 python.export_f32 python.export_string python.export_bool
-python.export_binary_u32 python.borrow_f32 python.f32_size python.f32_shape
-python.f32_read python.f32_write python.f32_modify python.f32_release
-python.f32_map python.f32_map_closed python.blas_scale python.blas_dot
-python.blas_axpy python.blas_matmul
-""".split()
+_PYTHON_FOREIGN = (
+    "python.export",
+    "python.require_no_kwargs",
+    "python.to_u32",
+    "python.from_u32",
+    "python.to_f32",
+    "python.from_f32",
+    "python.to_string",
+    "python.from_string",
+    "python.to_bool",
+    "python.from_bool",
+    "python.get_item",
+    "python.set_item",
+    "python.getattr",
+    "python.call",
+    "python.invoke",
+    "python.identical",
+    "python.builtins",
+    "python.none",
+    "python.empty_dict",
+    "python.tuple",
+    "python.list",
+    "python.len",
+    "python.from_nat",
+    "python.type_error",
+    "python.truthy",
+    "python.to_bytes",
+    "python.from_bytes",
+    "python.import_module",
+    "python.construct",
+    "python.fill_dict",
+    "python.dict",
+    "python.require_singleton",
+    "python.require_pair",
+    "python.unary",
+    "python.binary",
+    "python.invoke_unary",
+    "python.invoke_binary_u32_values",
+    "python.invoke_binary_u32",
+    "python.export_u32",
+    "python.export_f32",
+    "python.export_string",
+    "python.export_bool",
+    "python.export_binary_u32",
+    "python.borrow_f32",
+    "python.f32_size",
+    "python.f32_shape",
+    "python.f32_read",
+    "python.f32_write",
+    "python.f32_modify",
+    "python.f32_release",
+    "python.f32_map",
+    "python.f32_map_closed",
+    "python.blas_scale",
+    "python.blas_dot",
+    "python.blas_axpy",
+    "python.blas_matmul",
 )
-_TENSOR_FOREIGN = tuple(
-    """
-tensor.borrow_f32 tensor.require tensor.require_tensor tensor.check_forward_ad
-tensor.notify_write tensor.borrow_torch_f32 tensor.map_inplace tensor.map_object
-tensor.invoke_map tensor.export_numpy_f32_inplace tensor.export_torch_f32_inplace
-""".split()
+_TENSOR_FOREIGN = (
+    "tensor.borrow_f32",
+    "tensor.require",
+    "tensor.require_tensor",
+    "tensor.check_forward_ad",
+    "tensor.notify_write",
+    "tensor.borrow_torch_f32",
+    "tensor.map_inplace",
+    "tensor.map_object",
+    "tensor.invoke_map",
+    "tensor.export_numpy_f32_inplace",
+    "tensor.export_torch_f32_inplace",
 )
 _SELECTOR_LAWS = (
     "LAWS.singleton_accepted",

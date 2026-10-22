@@ -102,7 +102,9 @@ definitions can declare its reviewed diagnostic labels explicitly:
 
 ```python
 BendExtension(
-    "fast", "fast.bend", proofs=["PROOF.bend"],
+    "fast",
+    "fast.bend",
+    proofs=["PROOF.bend"],
     proof_trust={"PROOF.bend": {"foreign effects": reviewed_foreign_names}},
 )
 ```
