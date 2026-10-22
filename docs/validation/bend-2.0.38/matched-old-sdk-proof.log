@@ -1,0 +1,6 @@
+All terms check, but 4 defs rely on unsafe or foreign code:
+- LAWS.singleton_accepted
+- LAWS.singleton_rejected
+- LAWS.pair_accepted
+- LAWS.pair_rejected
+bend 2.0.36 is available: run bend update

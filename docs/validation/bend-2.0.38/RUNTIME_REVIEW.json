@@ -1,0 +1,43 @@
+{
+  "verdict": "ACCEPT_LIMITED_STATIC_RUNTIME_ABI_SOURCE",
+  "assigned_reviewer": "byte_sign_emitted_c_review",
+  "checks": {
+    "exact_early_mapping_record_pair_in_actual_patch_AST": true,
+    "actual_raw_and_fixture_single_mapping_line": true,
+    "fixture_setup_is_verbatim_actual38_setup": true,
+    "projected_setup_records_size_after_map_before_local_H_and_layout_call": true,
+    "unchanged_upstream_growth_record_is_exactly_guarded": true,
+    "patch_loop_still_requires_exact_one_occurrence": true,
+    "test_checks_early_record_before_actual_setup_layout_call": true,
+    "test_mutates_changed_mapping_line_to_fail_closed": true,
+    "same_bridge_bytes_as_broader_ABI_review": true,
+    "heap_size_macro_and_release_remain_per_lease": true,
+    "poisoned_context_never_reused": true,
+    "example_before_fix_TLS_relocated_and_old_globals_absent": true,
+    "example_before_fix_task_allocator_corpus_bodies_match_actual38": true,
+    "example_before_fix_new_FIDs_and_worker_error_boundary": true,
+    "smoke_before_fix_TLS_relocated_and_old_globals_absent": true,
+    "smoke_before_fix_task_allocator_corpus_bodies_match_actual38": true,
+    "smoke_before_fix_new_FIDs_and_worker_error_boundary": true
+  },
+  "all_checks_pass": true,
+  "open_findings": [],
+  "resolved_finding": "Initial corpus_setup layout rejection could precede heap_size recording and cause munmap(heap,0). The exact insertion now records size immediately after a successful mapping and before corpus_lay; the existing corpus_lay update still records successful growth.",
+  "bindings": {
+    "/tmp/bendsym-bend2038-sdk/src/bend_python/build.py": "7181c61ea23d84d494e2064f030f2541b6de9a29ac77e861ecb25069d00823f2",
+    "/tmp/bendsym-bend2038-sdk/bend/python.c": "38d8b550865b7252559c045db4504176ea8cbc43ee9a7cc68c88e955b8159f4f",
+    "/tmp/bendsym-bend2038-sdk/tests/test_runtime_patch.py": "1b69d6fb0a91b53c3c8b76e1b384e92eef870789f488c545b2ec0be4564bfe9e",
+    "/tmp/bendsym-bend2038-sdk/tests/fixtures/runtime-2.0.38.c": "abfdab6b10333186ffc7628ae10fa30275aadf13f8c26ef8b05c546672107002",
+    "/tmp/bendsym-bend2038-smoke/UNVALIDATED-raw.c": "ccf8d16ac124c06eb64dbd7cb7cee994b482f3ce0b7f866821a7c56ba2efb50a",
+    "/tmp/bendsym-bend2038-sdk/examples/build/temp.linux-x86_64-cpython-314t/bend_example.c": "b8169429bc61fe61589b56b7305e369ec7c48e4f9a9613db309e8596b8f54a24",
+    "/tmp/bendsym-bend2038-smoke/build/temp.linux-x86_64-cpython-314t/upgrade_smoke.c": "4c69ab09f551bdb45a85e533d656701e6f69f7583a5cff075d93d9f40a8d2628"
+  },
+  "limitations": [
+    "Example/smoke generated C inspected for broader ABI correspondence predates the early-record fix; no corrected native binary is certified by this review.",
+    "Early-record ordering is checked by static AST/string correspondence to actual .38 corpus_setup, not by executing SDK patcher/tests.",
+    "Root owns the three runtime-patch unit passes, lint, subsequent native failure/cache suite and app proof/build gates; reviewer did not rerun them.",
+    "No mathematical/compiler/FFI/end-to-end thread-safety theorem or performance claim."
+  ],
+  "reviewer_build_native_timing_or_model_executed": false,
+  "source_edits": false
+}

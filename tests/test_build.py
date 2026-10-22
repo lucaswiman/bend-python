@@ -200,7 +200,7 @@ class BuildTests(unittest.TestCase):
             marker = "static Term bp_apply(Env e, Term function, Term argument) {"
             self.assertEqual(source.count(marker), 1)
             source = source.replace(marker, NATIVE_RENDEZVOUS + "\n" + marker)
-            evaluator = "  return corpus_eval(e.mem, term_tsk(FID_CLO_APPLY, at));"
+            evaluator = "  return corpus_eval(e.mem, term_tsk(FID_Clo_apply, at));"
             self.assertEqual(source.count(evaluator), 1)
             shim.write_text(
                 source.replace(
@@ -281,10 +281,11 @@ class BuildTests(unittest.TestCase):
     def test_false_law_stops_build(self):
         directory, result = self.build(break_proof=True)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("expected", result.stdout + result.stderr)
-        self.assertCleanBuildError(
-            result, "Bend proof check failed: PROOF.bend (see Bend output above)"
-        )
+        output = result.stdout + result.stderr
+        self.assertIn("expected :", output)
+        self.assertIn("observed :", output)
+        self.assertIn("Location: Laws.square_wraps", output)
+        self.assertCleanBuildError(result, "Bend proof check failed: PROOF.bend")
         self.assertFalse(list(directory.rglob("*.so")))
 
     def test_missing_thread_proof_stops_build(self):
@@ -561,14 +562,16 @@ else:
 """,
         )
 
-    def test_missing_library_is_vendored_and_its_proofs_run_quietly(self):
+    def test_missing_library_is_vendored_and_declares_proof_trust(self):
         directory, result = self.build(auto_vendor=True)
         output = result.stdout + result.stderr
         self.assertEqual(result.returncode, 0, output)
         self.assertIn("vendoring the Bend library", output)
         self.assertTrue((directory / "examples/bend/python.bend").is_file())
-        # The library's own proof output (e.g. its foreign-code notes) stays quiet.
-        self.assertNotIn("LAWS.singleton_accepted", output)
+        # Foreign assumptions are declared; strict example laws still check.
+        self.assertIn("type-checked with declared trust assumptions", output)
+        self.assertIn("LAWS.singleton_accepted", output)
+        self.assertIn("ALL PROOFS CHECK", output)
         self.run_python(directory, "import bend_example\nassert bend_example.square(12) == 144\n")
 
     def test_duplicate_exports_fail_import(self):
@@ -605,7 +608,7 @@ class CompilerDownloadTests(unittest.TestCase):
         release = self.root / "release"
         (release / "bend/bin").mkdir(parents=True)
         executable = release / "bend/bin/bend"
-        executable.write_text("#!/bin/sh\necho 'bend 2.0.28'\n")
+        executable.write_text("#!/bin/sh\necho 'bend 2.0.38'\n")
         executable.chmod(0o755)
         self.archive = self.root / "bend.tar.gz"
         subprocess.run(["tar", "-czf", str(self.archive), "-C", str(release), "bend"], check=True)
@@ -626,8 +629,8 @@ class CompilerDownloadTests(unittest.TestCase):
     def test_download_verifies_extracts_and_caches(self):
         with self.release(self.digest):
             executable = self.build_module._cached_compiler()
-        self.assertEqual(executable, self.cache / "bend-python/bend-2.0.28/bin/bend")
-        self.assertEqual(self.build_module._bend_version(str(executable)), "bend 2.0.28")
+        self.assertEqual(executable, self.cache / "bend-python/bend-2.0.38/bin/bend")
+        self.assertEqual(self.build_module._bend_version(str(executable)), "bend 2.0.38")
         self.archive.unlink()  # A second lookup must not download again.
         with self.release(self.digest):
             self.assertEqual(self.build_module._cached_compiler(), executable)
@@ -645,7 +648,7 @@ class CompilerDownloadTests(unittest.TestCase):
             unittest.mock.patch.dict(os.environ, {"BEND_PYTHON_DOWNLOAD": "0"}),
         ):
             self.assertIsNone(self.build_module._cached_compiler())
-        self.assertFalse((self.cache / "bend-python/bend-2.0.28").exists())
+        self.assertFalse((self.cache / "bend-python/bend-2.0.38").exists())
 
     def test_explicit_bend_must_match_the_pinned_version(self):
         from setuptools.errors import ExecError
