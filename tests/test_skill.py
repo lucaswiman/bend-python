@@ -88,12 +88,27 @@ class SkillTests(unittest.TestCase):
                 capture_output=True,
             )
             vendor(project / "src/demo/bend")
-            for source in ["PROOF.bend", "src/demo/core.bend"]:
-                result = subprocess.run(
-                    [compiler, source, "--check-only"], cwd=project, capture_output=True, text=True
-                )
-                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertIn("All terms check", result.stdout + result.stderr)
+            result = subprocess.run(
+                [compiler, "PROOF.bend", "--check-only"],
+                cwd=project,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("ALL PROOFS CHECK", result.stdout + result.stderr)
+            # The runtime imports foreign effects: type-check and emit it,
+            # without pretending it is a strict proof root.
+            generated = project / "core.c"
+            result = subprocess.run(
+                [compiler, "src/demo/core.bend", "-o", str(generated)],
+                cwd=project,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertGreater(generated.stat().st_size, 0)
 
     def test_reorder_defs_moves_callees_up(self):
         with tempfile.TemporaryDirectory() as temporary:

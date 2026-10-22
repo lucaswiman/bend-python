@@ -1,14 +1,14 @@
-// CPython and private Bend 2.0.28 runtime boundary. Every invocation exclusively
+// CPython and private Bend 2.0.38 runtime boundary. Every invocation exclusively
 // owns a runtime instance; the generated runtime selects it through bp_current.
 // The build relocates this block before the pinned runtime's first state use.
 // BENDPY_RUNTIME_CONTEXT_BEGIN
 #include <setjmp.h>
 typedef struct BpRuntime {
-  Corpus heap;
-  u64 allocator[CUBE_T + 1][3 * ALC_WORDS] __attribute__((aligned(128)));
+  u64* heap;
+  u64 allocator[CUBE_T + 1][3 * NCLS_ALL] __attribute__((aligned(128)));
   u32 keep_words, cube_log, bank, workers;
   bool gpu;
-  Stk stack;
+  Term* stack;
   u64 heap_size;
   jmp_buf escape;
   bool poisoned;
@@ -211,10 +211,10 @@ static void* bp_alloc(size_t size) {
 }
 
 static Term bp_apply(Env e, Term function, Term argument) {
-  Loc at = task_node(e, FID_CLO_APPLY, TERM_HOLE, 0, 0);
+  u64 at = task_node(e, FID_Clo_apply, TERM_HOLE, 0, 0);
   e.mem[at] = function;
   e.mem[at + 1] = argument;
-  return corpus_eval(e.mem, term_tsk(FID_CLO_APPLY, at));
+  return corpus_eval(e.mem, term_tsk(FID_Clo_apply, at));
 }
 
 // Object wrappers may be packed or boxed on the heap. Anything else means the
@@ -768,7 +768,7 @@ static bool bp_native(BpCall* call, BpOperation operation) {
       case BP_INIT:
         call->continuation = corpus_eval(CORPUS,
           term_tsk(MAIN_FID, task_node(e, MAIN_FID, TERM_HOLE, 0, 0)));
-        call->argument = term_clo(FID_IO_EMIT, 0);
+        call->argument = term_clo(FID_IO_emit, 0);
         break;
       case BP_START: {
         Term args = term_pak(CID(Nil), 0);
@@ -776,7 +776,7 @@ static bool bp_native(BpCall* call, BpOperation operation) {
           args = io_node(e, CID(Con), bp_object(call, i - 1), args);
         Term input = io_node(e, CID(PyCall), args, bp_object(call, call->nargs));
         call->continuation = bp_apply(e, call->function, input);
-        call->argument = term_clo(FID_IO_EMIT, 0);
+        call->argument = term_clo(FID_IO_emit, 0);
         break;
       }
       case BP_RESUME: {

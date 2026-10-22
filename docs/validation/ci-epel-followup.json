@@ -1,0 +1,17 @@
+{
+  "scope": "Exclude unrelated EPEL metadata from the Clang install transaction after repeated pre-build CI failures. No SDK runtime, proof API, TLS, or checksum changes.",
+  "base_commit": "c22f032e83a01013fea14072b99d277e59b22b71",
+  "failed_jobs": [
+    "https://github.com/lucaswiman/bend-python/actions/runs/39723822228/job/119643101516",
+    "https://github.com/lucaswiman/bend-python/actions/runs/39724791326/job/119646122063"
+  ],
+  "failure": "dnf failed fetching EPEL repomd.xml due checksum mismatches, TLS failures, and timeouts; neither job reached SDK compilation.",
+  "successful_transaction": "https://github.com/lucaswiman/bend-python/actions/runs/39723822228/job/119643101492",
+  "transaction_evidence": "All 15 installed packages are from AlmaLinux AppStream: clang, clang-libs, clang-resource-filesystem, gcc-c++, gcc-toolset-15-binutils, gcc-toolset-15-gcc, gcc-toolset-15-gcc-c++, gcc-toolset-15-libstdc++-devel, gcc-toolset-15-runtime, llvm-filesystem, llvm-libs, compiler-rt, gcc-toolset-15-libatomic-devel, libomp, libomp-devel.",
+  "original_logs_sha256": {
+    "cp312-original.log": "6574c9f16f6400c0dd7baa61d23a9efae2c4b547d4774026c9471cd3efd2d2be",
+    "cp314-followup-failure.log": "dc1d7ef78ff4f6cd748f6b72d776914c18edf65a6dd8bc2b79e22cee15a42011",
+    "cp311-original.log": "9a80b53ba80090672362b5c1fe1f47c7a75ca56488d68c86eebe6e850db209f4"
+  },
+  "validation_status": "CI rerun pending on this recipe; previous follow-up has 9/10 jobs green, including cp312."
+}
