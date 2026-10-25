@@ -2,16 +2,16 @@
 name: bend-python
 description: Build and debug Bend 2 CPython extensions with the bend-python SDK, including .bend code, BendExtension builds, and LAWS.bend/PROOF.bend contracts. Use for Bend 2 extension work and its laws, proofs, and performance; not Bend 1/HVM or unrelated Python extensions.
 license: MIT
-compatibility: Linux x86_64, CPython 3.10-3.14 (and 3.14t), Clang 14+. First build needs PyPI and GitHub release downloads, or BEND set to a bend 2.0.28 executable.
+compatibility: Linux x86_64, CPython 3.10-3.14 (and 3.14t), Clang 14+. First build needs PyPI and GitHub release downloads, or BEND set to a bend 2.0.38 executable.
 metadata:
   bend-python-version: "0.1.0"
-  bend-version: "2.0.28"
+  bend-version: "2.0.38"
 ---
 
 # bend-python
 
 bend-python compiles a [Bend 2](https://github.com/bendlang/bend) program into
-a CPython extension module. Bend 2 (pinned: **2.0.28**) is a pure, affine,
+a CPython extension module. Bend 2 (pinned: **2.0.38**) is a pure, affine,
 dependently typed language with *laws*. Every law imported by a proof gate
 needs a checked proof before the extension compiles; passing tests do not fill
 unproved laws.

@@ -129,6 +129,46 @@ def stats():
 """
 
 
+RFC_GRAPH_MODULE = """
+def cells(+n: Nat) -> List<&2, U32>:
+  match n:
+    case 0n: []
+    case 1n+k: U32.from_nat(k) <> cells(k)
+
+def total(xs: List<&2, U32>) -> U32:
+  match xs:
+    case []: 0
+    case h<>t: (h + total(t) : U32)
+
+def work(n: U32) -> U32:
+  +xs = cells(U32.to_nat(n))
+  (total(xs) + total(xs) : U32)
+
+def with_graph(+xs: List<&2, U32>, callback: Python.Object) -> IO(Python.Object):
+  do IO<Python.Object>:
+    marker: Python.Object <- Python.from_u32(total(xs))
+    ignored: Python.Object <- Python.invoke(callback, [marker])
+    Python.from_u32((total(xs) + total(xs) : U32))
+
+def graph_values(values: Pair(Python.Object, Python.Object)) -> IO(Python.Object):
+  match values:
+    case (count, callback):
+      do IO<Python.Object>:
+        n: U32 <- Python.to_u32(count)
+        with_graph(cells(U32.to_nat(n)), callback)
+
+def graph(request: Python.Call) -> IO(Python.Object):
+  do IO<Python.Object>:
+    pair: Pair(Python.Object, Python.Object) <- Python.binary(request)
+    graph_values(pair)
+
+def main() -> IO(Unit):
+  do IO<Unit>:
+    Python.export_u32(~(n => work(n)), "work", True{})
+    Python.export("graph", graph, True{})
+"""
+
+
 class BuildTests(unittest.TestCase):
     def build(
         self,
@@ -140,6 +180,9 @@ class BuildTests(unittest.TestCase):
         auto_vendor=False,
         deterministic_handles=False,
         native_cache_probe=False,
+        atomic_refcounts=False,
+        constant_heap_threshold=True,
+        native_allocator_probe=False,
     ):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -153,6 +196,17 @@ class BuildTests(unittest.TestCase):
             directory / "examples",
             ignore=shutil.ignore_patterns("bend", "*.so", "__pycache__", "build"),
         )
+        if atomic_refcounts:
+            # Omit the example's opt-in to exercise the SDK's default build.
+            setup = directory / "examples/setup.py"
+            source = setup.read_text()
+            self.assertEqual(source.count("atomic_refcounts=False,"), 1)
+            setup.write_text(source.replace("atomic_refcounts=False,", ""))
+        if not constant_heap_threshold:
+            setup = directory / "examples/setup.py"
+            source = setup.read_text()
+            self.assertEqual(source.count("constant_heap_threshold=True,"), 1)
+            setup.write_text(source.replace("constant_heap_threshold=True,", ""))
         if module is not None:
             (directory / "examples/module.bend").write_text(
                 "import Base\nimport ./bend/python.bend as Python\n" + module
@@ -200,7 +254,7 @@ class BuildTests(unittest.TestCase):
             marker = "static Term bp_apply(Env e, Term function, Term argument) {"
             self.assertEqual(source.count(marker), 1)
             source = source.replace(marker, NATIVE_RENDEZVOUS + "\n" + marker)
-            evaluator = "  return corpus_eval(e.mem, term_tsk(FID_CLO_APPLY, at));"
+            evaluator = "  return corpus_eval(e.mem, term_tsk(FID_Clo_apply, at));"
             self.assertEqual(source.count(evaluator), 1)
             shim.write_text(
                 source.replace(
@@ -248,6 +302,13 @@ class BuildTests(unittest.TestCase):
                 self.assertEqual(source.count(marker), 1)
                 source = source.replace(marker, replacement)
             shim.write_text(source)
+        if native_allocator_probe:
+            shim = directory / "bend/python.c"
+            shim.write_text(
+                shim.read_text()
+                + "\n"
+                + (ROOT / "tests/fixtures/allocator-threshold.c").read_text()
+            )
         # Build the example project against this checkout's SDK sources.
         result = subprocess.run(
             [sys.executable, "setup.py", "build_ext", "--inplace"],
@@ -257,6 +318,14 @@ class BuildTests(unittest.TestCase):
             capture_output=True,
             timeout=60,
         )
+        if result.returncode == 0:
+            generated = next((directory / "examples/build").glob("temp.*/bend_example.c"))
+            source = generated.read_text()
+            self.assertEqual("  u32 c = a32_add(a32_at(e.mem, r), k);" in source, atomic_refcounts)
+            self.assertEqual(
+                "      if ((a32_sub_rel(p, 1) & RFC_CNT) != 1) {" in source, atomic_refcounts
+            )
+            self.assertEqual("ALC_LEN(e, cls) >= CAP_WORDS" in source, constant_heap_threshold)
         return directory, result
 
     def run_python(self, directory, source):
@@ -281,10 +350,11 @@ class BuildTests(unittest.TestCase):
     def test_false_law_stops_build(self):
         directory, result = self.build(break_proof=True)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("expected", result.stdout + result.stderr)
-        self.assertCleanBuildError(
-            result, "Bend proof check failed: PROOF.bend (see Bend output above)"
-        )
+        output = result.stdout + result.stderr
+        self.assertIn("expected :", output)
+        self.assertIn("observed :", output)
+        self.assertIn("Location: Laws.square_wraps", output)
+        self.assertCleanBuildError(result, "Bend proof check failed: PROOF.bend")
         self.assertFalse(list(directory.rglob("*.so")))
 
     def test_missing_thread_proof_stops_build(self):
@@ -442,6 +512,119 @@ assert stats()[3:6] == (0, 1, 0), stats()
 """,
         )
 
+    def test_shared_graph_survives_concurrent_reentry_and_callback_failure(self):
+        child = (
+            CACHE_SETUP
+            + """
+import threading
+from concurrent.futures import ThreadPoolExecutor
+barrier = threading.Barrier(2)
+expected_error = ValueError("outer graph callback failed")
+
+def job(n, fail):
+    def callback(checksum):
+        assert checksum == n * (n - 1) // 2
+        barrier.wait(timeout=5)
+        assert module.work(n + 7) == (n + 7) * (n + 6)
+        if fail:
+            raise expected_error
+        return object()
+    try:
+        result = module.graph(n, callback)
+    except ValueError as error:
+        assert fail and error is expected_error
+        return "raised"
+    assert not fail and result == n * (n - 1), result
+    return result
+
+with ThreadPoolExecutor(max_workers=2) as executor:
+    futures = [executor.submit(job, 257, False), executor.submit(job, 513, True)]
+    assert [future.result(timeout=10) for future in futures] == [257 * 256, "raised"]
+assert stats()[3:5] == (0, 0), stats()
+assert module.work(263) == 263 * 262
+assert module.graph(271, lambda checksum: checksum) == 271 * 270
+assert stats()[3:5] == (0, 0), stats()
+"""
+        )
+        for atomic_refcounts in (True, False):
+            with self.subTest(atomic_refcounts=atomic_refcounts):
+                directory, result = self.build(
+                    RFC_GRAPH_MODULE, native_cache_probe=True, atomic_refcounts=atomic_refcounts
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.run_python(directory, child)
+
+    def test_allocator_threshold_boundaries_banking_and_reallocation(self):
+        child = """
+import ctypes
+import bend_example as module
+probe = ctypes.PyDLL(module.__file__).bendsym_allocator_probe
+probe.argtypes = [ctypes.c_uint32, ctypes.POINTER(ctypes.c_uint64)]
+probe.restype = ctypes.c_int
+for cls in (0, 7, 15, 16):
+    out = (ctypes.c_uint64 * 9)()
+    result = probe(cls, out)
+    assert result == 0, (cls, result, list(out))
+"""
+        for constant in (False, True):
+            for poison in (False, True):
+                with self.subTest(constant_heap_threshold=constant, poison=poison):
+                    flags = os.environ.get("CFLAGS", "") + (" -DBEND_POISON" if poison else "")
+                    with unittest.mock.patch.dict(os.environ, {"CFLAGS": flags}):
+                        directory, result = self.build(
+                            constant_heap_threshold=constant, native_allocator_probe=True
+                        )
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.run_python(directory, child)
+
+    def test_cleanup_finalizer_hands_healthy_heap_to_another_thread(self):
+        child = (
+            CACHE_SETUP
+            + """
+import threading
+from concurrent.futures import ThreadPoolExecutor
+initial = stats()
+assert initial[0:2] == (1, 0) and initial[3] == 0, initial
+completed = threading.Event()
+errors = []
+owner_thread = threading.get_ident()
+
+def other_thread():
+    assert threading.get_ident() != owner_thread
+    result = module.work(389)
+    return result, stats()
+
+with ThreadPoolExecutor(max_workers=1) as executor:
+    class Cleanup:
+        def __del__(self):
+            try:
+                assert stats()[3] == 0, stats()
+                result, during = executor.submit(other_thread).result(timeout=5)
+                assert result == 389 * 388, result
+                assert during[0:3] == initial[0:3], (initial, during)
+                assert during[3] == 0, during
+            except Exception as error:
+                errors.append(error)
+            finally:
+                completed.set()
+    def callback(checksum):
+        assert checksum == 293 * 292 // 2, checksum
+        return Cleanup()
+    assert module.graph(293, callback) == 293 * 292
+    assert completed.wait(timeout=5), "arena finalizer did not execute"
+    if errors:
+        raise errors[0]
+assert stats() == initial, (initial, stats())
+"""
+        )
+        for atomic_refcounts in (True, False):
+            with self.subTest(atomic_refcounts=atomic_refcounts):
+                directory, result = self.build(
+                    RFC_GRAPH_MODULE, native_cache_probe=True, atomic_refcounts=atomic_refcounts
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.run_python(directory, child)
+
     def test_forged_handles_are_rejected(self):
         # With this fixed seed, both forgeries decode outside the arena. Random
         # keys can decode a forgery to a valid index, so rejection is not guaranteed.
@@ -561,14 +744,16 @@ else:
 """,
         )
 
-    def test_missing_library_is_vendored_and_its_proofs_run_quietly(self):
+    def test_missing_library_is_vendored_and_declares_proof_trust(self):
         directory, result = self.build(auto_vendor=True)
         output = result.stdout + result.stderr
         self.assertEqual(result.returncode, 0, output)
         self.assertIn("vendoring the Bend library", output)
         self.assertTrue((directory / "examples/bend/python.bend").is_file())
-        # The library's own proof output (e.g. its foreign-code notes) stays quiet.
-        self.assertNotIn("LAWS.singleton_accepted", output)
+        # Foreign assumptions are declared; strict example laws still check.
+        self.assertIn("type-checked with declared trust assumptions", output)
+        self.assertIn("LAWS.singleton_accepted", output)
+        self.assertIn("ALL PROOFS CHECK", output)
         self.run_python(directory, "import bend_example\nassert bend_example.square(12) == 144\n")
 
     def test_duplicate_exports_fail_import(self):
@@ -605,7 +790,7 @@ class CompilerDownloadTests(unittest.TestCase):
         release = self.root / "release"
         (release / "bend/bin").mkdir(parents=True)
         executable = release / "bend/bin/bend"
-        executable.write_text("#!/bin/sh\necho 'bend 2.0.28'\n")
+        executable.write_text("#!/bin/sh\necho 'bend 2.0.38'\n")
         executable.chmod(0o755)
         self.archive = self.root / "bend.tar.gz"
         subprocess.run(["tar", "-czf", str(self.archive), "-C", str(release), "bend"], check=True)
@@ -626,8 +811,8 @@ class CompilerDownloadTests(unittest.TestCase):
     def test_download_verifies_extracts_and_caches(self):
         with self.release(self.digest):
             executable = self.build_module._cached_compiler()
-        self.assertEqual(executable, self.cache / "bend-python/bend-2.0.28/bin/bend")
-        self.assertEqual(self.build_module._bend_version(str(executable)), "bend 2.0.28")
+        self.assertEqual(executable, self.cache / "bend-python/bend-2.0.38/bin/bend")
+        self.assertEqual(self.build_module._bend_version(str(executable)), "bend 2.0.38")
         self.archive.unlink()  # A second lookup must not download again.
         with self.release(self.digest):
             self.assertEqual(self.build_module._cached_compiler(), executable)
@@ -645,7 +830,7 @@ class CompilerDownloadTests(unittest.TestCase):
             unittest.mock.patch.dict(os.environ, {"BEND_PYTHON_DOWNLOAD": "0"}),
         ):
             self.assertIsNone(self.build_module._cached_compiler())
-        self.assertFalse((self.cache / "bend-python/bend-2.0.28").exists())
+        self.assertFalse((self.cache / "bend-python/bend-2.0.38").exists())
 
     def test_explicit_bend_must_match_the_pinned_version(self):
         from setuptools.errors import ExecError

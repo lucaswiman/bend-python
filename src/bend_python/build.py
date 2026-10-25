@@ -22,10 +22,11 @@ from setuptools.errors import CompileError, ExecError, PlatformError
 
 from . import BEND_VERSION
 from .library import library_path, vendor
+from .proof_trust import SDK_PROOF_TRUST, classify_proof_check
 
 BEND_RELEASE = (
     f"https://github.com/bendlang/bend/releases/download/v{BEND_VERSION}/bend-{BEND_VERSION}-linux-x64.tar.gz",
-    "22bb6d5f6bce8ae2c5b340371fedddcbd90edc07a48b6e2b351a944c4558a3eb",
+    "f19d088b079c9e1a8834ecd153b7d58c11a5f8f9ab1bdb78dbc96a6bf49aaa81",
 )
 
 
@@ -36,13 +37,32 @@ class BendExtension(Extension):
     library. Normal setuptools Extension keyword arguments remain available.
     """
 
-    def __init__(self, name, source, *, proofs=(), **kwargs):
+    def __init__(
+        self,
+        name,
+        source,
+        *,
+        proofs=(),
+        proof_trust=None,
+        atomic_refcounts=True,
+        constant_heap_threshold=False,
+        **kwargs,
+    ):
         if not all(re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", part) for part in name.split(".")):
             raise ValueError("Bend extension names must be dotted ASCII Python identifiers")
         if Path(source).suffix != ".bend":
             raise ValueError("BendExtension source must be a .bend file")
+        if not isinstance(atomic_refcounts, bool):
+            raise TypeError("atomic_refcounts must be a bool")
+        if not isinstance(constant_heap_threshold, bool):
+            raise TypeError("constant_heap_threshold must be a bool")
         self.bend_source = str(source)
         self.bend_proofs = [str(path) for path in proofs]
+        self.bend_proof_trust = dict(proof_trust or {})
+        self.bend_atomic_refcounts = atomic_refcounts
+        self.bend_constant_heap_threshold = constant_heap_threshold
+        if set(self.bend_proof_trust) - set(self.bend_proofs):
+            raise ValueError("proof_trust keys must name this extension's proof entry points")
         defaults = {
             "extra_compile_args": [
                 "-std=c11",
@@ -161,31 +181,52 @@ def _bridge_libraries(source):
         return found
 
 
-def _bend(bend, *args, failure, quiet=False):
+def _bend(bend, *args, failure):
     # Bend prints its own diagnostic; end the build with a setuptools error
     # (reported as "error: ...") rather than a CalledProcessError traceback.
-    # Quiet runs (the library's own proofs) print their output only on failure.
-    result = subprocess.run([bend, *args], capture_output=quiet, text=True)
+    result = subprocess.run([bend, *args], text=True, env={**os.environ, "BEND_NO_TELEMETRY": "1"})
     if result.returncode != 0:
-        if quiet:
-            sys.stderr.write(result.stdout + result.stderr)
         raise CompileError(f"{failure} (see Bend output above)")
 
 
-def _patch_runtime(source, name):
-    fatal = """static void err_fail(const char* msg) {
-  fflush(stdout);
+def check_proof(bend, proof, *, trust=None, quiet=False):
+    """Check filled laws, allowing only an explicit exact diagnostic trust set."""
+    result = subprocess.run(
+        [bend, str(proof), "--check-only"],
+        capture_output=True,
+        env={**os.environ, "BEND_NO_TELEMETRY": "1"},
+    )
+    # Preserve diagnostic newlines: text=True would silently normalize CRLF/CR.
+    stdout, stderr = result.stdout.decode("utf-8"), result.stderr.decode("utf-8")
+    try:
+        status = classify_proof_check(result.returncode, stdout, stderr, trust)
+    except ValueError as error:
+        sys.stderr.write(stdout + stderr)
+        raise CompileError(f"Bend proof check failed: {proof}: {error}") from error
+    if status == "typed_with_declared_trust_boundary":
+        sys.stderr.write(f"bend-python: {proof}: type-checked with declared trust assumptions\n")
+        sys.stderr.write(stderr)
+    elif not quiet:
+        sys.stdout.write(stdout)
+    return status
+
+
+def _patch_runtime(source, name, *, atomic_refcounts=True, constant_heap_threshold=False):
+    # corpus_lay records growth. Preserve it so cleanup unmaps the full lease.
+    if source.count("  corpus_size = size;\n  a32_store_rel(a32_at(H, H_CAP), (u32)cap);") != 1:
+        raise CompileError("Bend heap-size tracking changed")
+    fatal = """OUTLINE void err_fail(const char* msg) {
+  if (err_claim()) fflush(stdout);
   fprintf(stderr, "bend: %s\\n", msg);
   _exit(1);
 }"""
-    cpu_globals = """static Corpus CORPUS;
-static u64    ALC[CUBE_T + 1][3 * ALC_WORDS] __attribute__((aligned(128)));
+    cpu_globals = """static u64*    CORPUS;
+static u64    ALC[CUBE_T + 1][3 * NCLS_ALL] __attribute__((aligned(128)));
 static u32    KEEP_WORDS;
-// the bag: 2^CUBE_LOG groups of CUBE_T lanes (a -D constant on the device)
 static u32    CUBE_LOG = 7;
 static u32    bank_lock;
 
-static u32            pool_size;"""
+static u32             pool_size;"""
     context_blocks = list(
         re.finditer(
             r"// BENDPY_RUNTIME_CONTEXT_BEGIN\n(.*?)// BENDPY_RUNTIME_CONTEXT_END\n",
@@ -206,19 +247,24 @@ static u32            pool_size;"""
     return;
   }
   up = true;
-  for (u32 w = 0; w < pool_size; w += 1) {
+  for (u32 w = 1; w < pool_size; w += 1) {
     pthread_t tid;
     if (pthread_create(&tid, NULL, pool_work, (void*)(uintptr_t)w)) {
       err_fail("pthread_create");
     }
   }
 }"""
-    for old, new in [
+    patches = [
         (fatal, "static void err_fail(const char* msg) { bendpy_panic(msg); }"),
         (cpu_globals, contexts),
-        ("static bool io_gpu;\nstatic Stk  io_stk;", ""),
+        ("static bool io_gpu;\nstatic DEV Term*  io_stk;", ""),
         ("static u64 corpus_size;", ""),
-        ("  Corpus H   = CORPUS;", "  Corpus H   = CORPUS;\n  corpus_size = size;"),
+        # Initial layout can fail after mmap. Record the mapping before it can
+        # panic, so the poisoned lease still unmaps the allocation in full.
+        (
+            "  CORPUS     = gpu ? gpu_map(size) : corpus_map(size);",
+            "  CORPUS     = gpu ? gpu_map(size) : corpus_map(size);\n  corpus_size = size;",
+        ),
         (
             pool_open,
             """OUTLINE void pool_open(void) {
@@ -239,11 +285,61 @@ static u32            pool_size;"""
         # registers uninitialized instead. Keep them defined and use the default
         # convention, as Clang 14-18 (which lack preserve_none) already do.
         (
-            "#if __has_attribute(preserve_none) && __has_attribute(preserve_most)\n"
+            "#if __has_attribute(preserve_none) && __has_attribute(preserve_most) \\\n"
+            "  && __OPTIMIZE__\n"
             "#define PRESERVE(A) __attribute__((A))\n#else\n#define PRESERVE(A)\n#endif\n",
             "#define PRESERVE(A)\n",
         ),
-    ]:
+    ]
+    if not atomic_refcounts:
+        # The caller commits to exclusive heap access, including its foreign C.
+        # Keep the old-value predicates, memory ordering and all other atomics.
+        patches += [
+            (
+                "  u32 c = a32_add(a32_at(e.mem, r), k);",
+                "  DEV u32* p = a32_at(e.mem, r);\n  u32 c = a32_load(p);\n  a32_store(p, c + k);",
+            ),
+            (
+                "      if ((a32_sub_rel(p, 1) & RFC_CNT) != 1) {",
+                "      u32 c = a32_load(p);\n"
+                "      a32_store_rel(p, c - 1);\n"
+                "      if ((c & RFC_CNT) != 1) {",
+            ),
+        ]
+    if constant_heap_threshold:
+        # Exclusive ownership alone does not imply constant allocator metadata.
+        # The opted-in native closure must preserve the CPU setup policy.
+        for marker in (
+            "#define CAP_WORDS 32768\n",
+            "  KEEP_WORDS = gpu ? CHUNK : CAP_WORDS;\n",
+            "    if (CORPUS == NULL) {\n      corpus_setup(false, 1, 0);\n",
+        ):
+            if source.count(marker) != 1:
+                raise CompileError("Bend CPU allocator initialization changed")
+        heap_free = """INLINE void heap_free(Env e, u32 cls, u64 loc) {
+  if (err_peek(e.mem)) {
+    return;
+  }
+#ifdef BEND_POISON // a later read of a freed block fails
+  for (u64 i = 1; i < 1ull << cls; i += 1) {
+    e.mem[loc + i] = RFC_BIT | TAG_CTR << 56 | LOC_MASK;
+  }
+#endif
+  e.mem[loc]       = ALC_AT(e, cls);
+  ALC_AT(e, cls)   = loc;
+  ALC_LEN(e, cls) += 1ull << cls;
+  if (!DEVICE && ALC_LEN(e, cls) >= KEEP_WORDS) {
+    heap_hand(e, cls);
+  }
+}
+"""
+        patches.append(
+            (
+                heap_free,
+                heap_free.replace("ALC_LEN(e, cls) >= KEEP_WORDS", "ALC_LEN(e, cls) >= CAP_WORDS"),
+            )
+        )
+    for old, new in patches:
         if source.count(old) != 1:
             raise CompileError("Bend runtime changed; refusing an unreviewed embedding patch")
         source = source.replace(old, new)
@@ -317,11 +413,14 @@ class BendBuildExt(build_ext):
             if not Path(path).is_file():
                 raise CompileError(f"Bend proof file not found: {path}")
         for proof in dict.fromkeys([*library_proofs, *extension.bend_proofs]):
-            _bend(
+            check_proof(
                 bend,
                 proof,
-                "--check-only",
-                failure=f"Bend proof check failed: {proof}",
+                trust=(
+                    SDK_PROOF_TRUST[Path(proof).name]
+                    if proof in library_proofs
+                    else extension.bend_proof_trust.get(proof)
+                ),
                 quiet=proof in library_proofs,
             )
         generated = Path(self.build_temp) / (extension.name + ".c")
@@ -333,7 +432,14 @@ class BendBuildExt(build_ext):
             str(generated),
             failure=f"Bend compilation failed: {extension.bend_source}",
         )
-        generated.write_text(_patch_runtime(generated.read_text(), extension.name))
+        generated.write_text(
+            _patch_runtime(
+                generated.read_text(),
+                extension.name,
+                atomic_refcounts=extension.bend_atomic_refcounts,
+                constant_heap_threshold=extension.bend_constant_heap_threshold,
+            )
+        )
         sources = extension.sources
         extension.sources = [str(generated)]
         try:

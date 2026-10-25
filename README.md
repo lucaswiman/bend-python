@@ -2,8 +2,9 @@
 
 Write CPython extensions in [Bend 2](https://github.com/bendlang/bend), a pure,
 dependently typed language that compiles to native code, and state laws about
-your code that the build **proves before it compiles**. A false law is a build
-error, not a failing test.
+your code that the build **checks before it compiles**. A false law is a build
+error. Foreign implementations and explicitly unsafe definitions remain trust
+assumptions; the build does not verify their correctness.
 
 ```bend
 # fast.bend
@@ -49,7 +50,7 @@ OverflowError: can't convert negative value to unsigned int
 in parallel. Installed wheels need neither Bend nor a compiler.
 
 **Status: experimental.** Linux x86_64, CPython 3.10–3.14 including free-threaded
-3.14t, Bend pinned to 2.0.28. Bend 2 is young: its strings are linked lists of
+3.14t, Bend pinned to 2.0.38. Bend 2 is young: its strings are linked lists of
 characters, so text-heavy code is slow and memory-hungry. Benchmark before
 relying on it.
 
@@ -85,13 +86,64 @@ requires = ["setuptools>=80", "bend-python==0.1.0"]
 build-backend = "setuptools.build_meta"
 ```
 
-Then `python -m build` or `pip install .`. The build proves the library's laws
+Then `python -m build` or `pip install .`. The build checks the library's laws
 and yours, generates C, and compiles it; a false law ends the build with
 `error: Bend proof check failed: PROOF.bend` after Bend's diagnostic. Dotted
 names such as `mypackage._native` work. Ship your `.bend` files in the sdist
 (`include *.bend` in `MANIFEST.in`).
 [`examples/`](https://github.com/lucaswiman/bend-python/tree/main/examples) is a
 complete project built this way.
+
+For an extension whose native effects preserve exclusive heap ownership, set
+`atomic_refcounts=False` on `BendExtension` to replace the two private reference
+counter read-modify-write operations with load/update/store. Atomic counters
+remain the default. This option retains atomic loads/stores, memory ordering,
+overflow checks and all other synchronization; it adds no runtime mode switch.
+
+The contract covers native code as well as Bend: one CPU worker per leased heap,
+no retained or cross-thread heap/allocator aliases, and no bypass of the SDK's
+lease driver. Parallel Python calls and callback reentry still use independent
+heaps. The canonical SDK effects satisfy this boundary, and the example opts in.
+Choosing this option does not verify custom foreign C; atomic counters alone do
+not make heap escape supported either. Bend source proofs do not prove this C
+specialization or CPython's implementation.
+
+For canonical CPU effects that also leave the allocator policy unchanged, set
+`constant_heap_threshold=True`. This specializes one free-chain comparison to
+the initialized 32,768-word threshold and avoids a thread-local metadata read;
+the threshold, banking, other metadata reads and synchronization stay the same.
+The default is `False`, independently of `atomic_refcounts`.
+
+This option requires every admitted native effect to preserve the initialized
+`keep_words` value, through callbacks, cleanup and cached-heap reuse. Custom C
+must not change that field through any alias or reinitialize the lease with a
+different policy. Exclusive ownership alone does not establish this condition.
+The canonical SDK effects satisfy it, and the example opts in. Exact runtime
+and initialization guards detect pinned-source drift; they do not verify
+arbitrary custom C or establish a C/CPython theorem.
+
+Bend 2.0.38 reports imported foreign and unsafe definitions as a failed proof
+verdict, even when every filled law type-checks. The SDK permits only its
+recorded foreign dependency set and prints the original diagnostic. Application
+proofs default to strict checking. A proof that intentionally imports such
+definitions can declare its reviewed diagnostic labels explicitly:
+
+```python
+BendExtension(
+    "fast",
+    "fast.bend",
+    proofs=["PROOF.bend"],
+    proof_trust={"PROOF.bend": {"foreign effects": reviewed_foreign_names}},
+)
+```
+
+Here `reviewed_foreign_names` is the complete collection from that root's reviewed
+diagnostic. The set must match exactly; type errors, unfinished
+proofs and additional trust assumptions fail the build. Retain the compiler
+version, sources and original diagnostic when reviewing a policy: Bend's printed
+labels can merge distinct internal names. Acceptance with declared trust means
+type-checked under those assumptions, not `ALL PROOFS CHECK` or a recheck with
+Bend's proven kernel (`--verdict`). The C bridge still requires native tests.
 
 ### Optional: an agent skill
 
@@ -378,7 +430,7 @@ its evidence:
   cached; an instance whose dynamic heap allocation high-water mark exceeded
   32 MiB is released instead. The budget excludes the sparse runtime metadata
   prefix and does not bound total resident memory.
-- Bend's C runtime is private API. The build pins 2.0.28 and refuses to patch a
+- Bend's C runtime is private API. The build pins 2.0.38 and refuses to patch a
   runtime that has changed.
 
 ## Developing this repository

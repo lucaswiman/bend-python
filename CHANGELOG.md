@@ -9,6 +9,14 @@ when its version has a section below.
 
 ### Added
 
+- Optional `BendExtension(..., constant_heap_threshold=True)` specialization for
+  native effects that preserve the initialized CPU allocator policy. It removes
+  one thread-local threshold read while retaining the 32,768-word policy. The
+  default is unchanged and independent of reference-counter specialization.
+- Explicit `BendExtension(..., atomic_refcounts=False)` optimization for trusted
+  native effects that preserve exclusive leased-heap ownership. Atomic counters
+  remain the default; other atomics and Python parallel/reentrant calls are
+  unchanged. The canonical example opts in and existing CI exercises it.
 - An agent skill, `skills/bend-python`, installable with
   `gh skill install lucaswiman/bend-python bend-python`: setup, the build, the
   Python interface and its guarantees, Bend 2's checker rules with fixes, and
@@ -29,6 +37,10 @@ when its version has a section below.
 
 ### Changed
 
+- Pin Bend 2.0.38 and adapt the private C runtime boundary. Proof gates reject
+  type errors and undeclared trust dependencies; effectful SDK laws retain an
+  explicit, exact diagnostic trust set instead of treating the new checker's
+  foreign-effect refusal as strict proof success.
 - Closed-template maps avoid per-element successor objects; both map paths use
   incremental strided traversal with constant storage per axis.
 - Positional Python calls use vectorcall, and native object identity avoids
