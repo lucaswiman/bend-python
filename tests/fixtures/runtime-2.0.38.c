@@ -91,3 +91,29 @@ static u64* corpus_setup(bool gpu, long threads, u64 bytes) {
   pool_size = threads < 1 ? 1 : threads < CUBE_T ? threads : CUBE_T;
   return H;
 }
+
+INLINE void rfc_bump(Env e, u64 r, u32 k) {
+  u32 c = a32_add(a32_at(e.mem, r), k);
+  if ((c & RFC_CNT) >= RFC_CNT - k) {
+    err_post(e.mem, ERR_CNTS);
+  }
+}
+
+FAR void term_drop(Env e, Term t) {
+  DEV u64* H = e.mem;
+  u64  cur = 0;
+  Term c0  = 0;
+  u32  step = 0;
+  for (;;) {
+    if (!term_triv(t) && term_rfc(t)) {
+      u64      r = term_loc(t);
+      DEV u32* p = a32_at(H, r);
+      if ((a32_sub_rel(p, 1) & RFC_CNT) != 1) {
+        t = 0;
+      } else {
+        a32_acq(p);
+        t = (t & ~(RFC_BIT | LOC_MASK)) | (H[r] >> 24);
+        heap_free(e, 0, r);
+      }
+    }
+    // Remaining traversal omitted: this is a text-patch fixture.

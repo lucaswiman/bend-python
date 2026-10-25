@@ -37,14 +37,19 @@ class BendExtension(Extension):
     library. Normal setuptools Extension keyword arguments remain available.
     """
 
-    def __init__(self, name, source, *, proofs=(), proof_trust=None, **kwargs):
+    def __init__(
+        self, name, source, *, proofs=(), proof_trust=None, atomic_refcounts=True, **kwargs
+    ):
         if not all(re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", part) for part in name.split(".")):
             raise ValueError("Bend extension names must be dotted ASCII Python identifiers")
         if Path(source).suffix != ".bend":
             raise ValueError("BendExtension source must be a .bend file")
+        if not isinstance(atomic_refcounts, bool):
+            raise TypeError("atomic_refcounts must be a bool")
         self.bend_source = str(source)
         self.bend_proofs = [str(path) for path in proofs]
         self.bend_proof_trust = dict(proof_trust or {})
+        self.bend_atomic_refcounts = atomic_refcounts
         if set(self.bend_proof_trust) - set(self.bend_proofs):
             raise ValueError("proof_trust keys must name this extension's proof entry points")
         defaults = {
@@ -195,7 +200,7 @@ def check_proof(bend, proof, *, trust=None, quiet=False):
     return status
 
 
-def _patch_runtime(source, name):
+def _patch_runtime(source, name, *, atomic_refcounts=True):
     # corpus_lay records growth. Preserve it so cleanup unmaps the full lease.
     if source.count("  corpus_size = size;\n  a32_store_rel(a32_at(H, H_CAP), (u32)cap);") != 1:
         raise CompileError("Bend heap-size tracking changed")
@@ -238,7 +243,7 @@ static u32             pool_size;"""
     }
   }
 }"""
-    for old, new in [
+    patches = [
         (fatal, "static void err_fail(const char* msg) { bendpy_panic(msg); }"),
         (cpu_globals, contexts),
         ("static bool io_gpu;\nstatic DEV Term*  io_stk;", ""),
@@ -274,7 +279,23 @@ static u32             pool_size;"""
             "#define PRESERVE(A) __attribute__((A))\n#else\n#define PRESERVE(A)\n#endif\n",
             "#define PRESERVE(A)\n",
         ),
-    ]:
+    ]
+    if not atomic_refcounts:
+        # The caller commits to exclusive heap access, including its foreign C.
+        # Keep the old-value predicates, memory ordering and all other atomics.
+        patches += [
+            (
+                "  u32 c = a32_add(a32_at(e.mem, r), k);",
+                "  DEV u32* p = a32_at(e.mem, r);\n  u32 c = a32_load(p);\n  a32_store(p, c + k);",
+            ),
+            (
+                "      if ((a32_sub_rel(p, 1) & RFC_CNT) != 1) {",
+                "      u32 c = a32_load(p);\n"
+                "      a32_store_rel(p, c - 1);\n"
+                "      if ((c & RFC_CNT) != 1) {",
+            ),
+        ]
+    for old, new in patches:
         if source.count(old) != 1:
             raise CompileError("Bend runtime changed; refusing an unreviewed embedding patch")
         source = source.replace(old, new)
@@ -367,7 +388,13 @@ class BendBuildExt(build_ext):
             str(generated),
             failure=f"Bend compilation failed: {extension.bend_source}",
         )
-        generated.write_text(_patch_runtime(generated.read_text(), extension.name))
+        generated.write_text(
+            _patch_runtime(
+                generated.read_text(),
+                extension.name,
+                atomic_refcounts=extension.bend_atomic_refcounts,
+            )
+        )
         sources = extension.sources
         extension.sources = [str(generated)]
         try:
