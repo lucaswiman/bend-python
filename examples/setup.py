@@ -10,6 +10,13 @@ from bend_python import BendBuildExt, BendExtension, vendor
 vendor(Path(__file__).parent / "bend", force=True)
 
 setup(
-    ext_modules=[BendExtension("bend_example", "module.bend", proofs=["PROOF.bend"])],
+    ext_modules=[
+        BendExtension(
+            "bend_example",
+            "module.bend",
+            proofs=["PROOF.bend"],
+            atomic_refcounts=False,
+        )
+    ],
     cmdclass={"build_ext": BendBuildExt},
 )
