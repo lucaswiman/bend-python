@@ -3,6 +3,7 @@
 // Source SHA256: ccf8d16ac124c06eb64dbd7cb7cee994b482f3ce0b7f866821a7c56ba2efb50a
 
 #define _GNU_SOURCE
+#define CAP_WORDS 32768
 
 #if __has_attribute(preserve_none) && __has_attribute(preserve_most) \
   && __OPTIMIZE__
@@ -90,6 +91,23 @@ static u64* corpus_setup(bool gpu, long threads, u64 bytes) {
   }
   pool_size = threads < 1 ? 1 : threads < CUBE_T ? threads : CUBE_T;
   return H;
+}
+
+INLINE void heap_free(Env e, u32 cls, u64 loc) {
+  if (err_peek(e.mem)) {
+    return;
+  }
+#ifdef BEND_POISON // a later read of a freed block fails
+  for (u64 i = 1; i < 1ull << cls; i += 1) {
+    e.mem[loc + i] = RFC_BIT | TAG_CTR << 56 | LOC_MASK;
+  }
+#endif
+  e.mem[loc]       = ALC_AT(e, cls);
+  ALC_AT(e, cls)   = loc;
+  ALC_LEN(e, cls) += 1ull << cls;
+  if (!DEVICE && ALC_LEN(e, cls) >= KEEP_WORDS) {
+    heap_hand(e, cls);
+  }
 }
 
 INLINE void rfc_bump(Env e, u64 r, u32 k) {

@@ -9,6 +9,10 @@ when its version has a section below.
 
 ### Added
 
+- Optional `BendExtension(..., constant_heap_threshold=True)` specialization for
+  native effects that preserve the initialized CPU allocator policy. It removes
+  one thread-local threshold read while retaining the 32,768-word policy. The
+  default is unchanged and independent of reference-counter specialization.
 - Explicit `BendExtension(..., atomic_refcounts=False)` optimization for trusted
   native effects that preserve exclusive leased-heap ownership. Atomic counters
   remain the default; other atomics and Python parallel/reentrant calls are

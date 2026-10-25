@@ -108,6 +108,20 @@ Choosing this option does not verify custom foreign C; atomic counters alone do
 not make heap escape supported either. Bend source proofs do not prove this C
 specialization or CPython's implementation.
 
+For canonical CPU effects that also leave the allocator policy unchanged, set
+`constant_heap_threshold=True`. This specializes one free-chain comparison to
+the initialized 32,768-word threshold and avoids a thread-local metadata read;
+the threshold, banking, other metadata reads and synchronization stay the same.
+The default is `False`, independently of `atomic_refcounts`.
+
+This option requires every admitted native effect to preserve the initialized
+`keep_words` value, through callbacks, cleanup and cached-heap reuse. Custom C
+must not change that field through any alias or reinitialize the lease with a
+different policy. Exclusive ownership alone does not establish this condition.
+The canonical SDK effects satisfy it, and the example opts in. Exact runtime
+and initialization guards detect pinned-source drift; they do not verify
+arbitrary custom C or establish a C/CPython theorem.
+
 Bend 2.0.38 reports imported foreign and unsafe definitions as a failed proof
 verdict, even when every filled law type-checks. The SDK permits only its
 recorded foreign dependency set and prints the original diagnostic. Application

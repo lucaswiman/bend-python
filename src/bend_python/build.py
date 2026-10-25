@@ -38,7 +38,15 @@ class BendExtension(Extension):
     """
 
     def __init__(
-        self, name, source, *, proofs=(), proof_trust=None, atomic_refcounts=True, **kwargs
+        self,
+        name,
+        source,
+        *,
+        proofs=(),
+        proof_trust=None,
+        atomic_refcounts=True,
+        constant_heap_threshold=False,
+        **kwargs,
     ):
         if not all(re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", part) for part in name.split(".")):
             raise ValueError("Bend extension names must be dotted ASCII Python identifiers")
@@ -46,10 +54,13 @@ class BendExtension(Extension):
             raise ValueError("BendExtension source must be a .bend file")
         if not isinstance(atomic_refcounts, bool):
             raise TypeError("atomic_refcounts must be a bool")
+        if not isinstance(constant_heap_threshold, bool):
+            raise TypeError("constant_heap_threshold must be a bool")
         self.bend_source = str(source)
         self.bend_proofs = [str(path) for path in proofs]
         self.bend_proof_trust = dict(proof_trust or {})
         self.bend_atomic_refcounts = atomic_refcounts
+        self.bend_constant_heap_threshold = constant_heap_threshold
         if set(self.bend_proof_trust) - set(self.bend_proofs):
             raise ValueError("proof_trust keys must name this extension's proof entry points")
         defaults = {
@@ -200,7 +211,7 @@ def check_proof(bend, proof, *, trust=None, quiet=False):
     return status
 
 
-def _patch_runtime(source, name, *, atomic_refcounts=True):
+def _patch_runtime(source, name, *, atomic_refcounts=True, constant_heap_threshold=False):
     # corpus_lay records growth. Preserve it so cleanup unmaps the full lease.
     if source.count("  corpus_size = size;\n  a32_store_rel(a32_at(H, H_CAP), (u32)cap);") != 1:
         raise CompileError("Bend heap-size tracking changed")
@@ -295,6 +306,39 @@ static u32             pool_size;"""
                 "      if ((c & RFC_CNT) != 1) {",
             ),
         ]
+    if constant_heap_threshold:
+        # Exclusive ownership alone does not imply constant allocator metadata.
+        # The opted-in native closure must preserve the CPU setup policy.
+        for marker in (
+            "#define CAP_WORDS 32768\n",
+            "  KEEP_WORDS = gpu ? CHUNK : CAP_WORDS;\n",
+            "    if (CORPUS == NULL) {\n      corpus_setup(false, 1, 0);\n",
+        ):
+            if source.count(marker) != 1:
+                raise CompileError("Bend CPU allocator initialization changed")
+        heap_free = """INLINE void heap_free(Env e, u32 cls, u64 loc) {
+  if (err_peek(e.mem)) {
+    return;
+  }
+#ifdef BEND_POISON // a later read of a freed block fails
+  for (u64 i = 1; i < 1ull << cls; i += 1) {
+    e.mem[loc + i] = RFC_BIT | TAG_CTR << 56 | LOC_MASK;
+  }
+#endif
+  e.mem[loc]       = ALC_AT(e, cls);
+  ALC_AT(e, cls)   = loc;
+  ALC_LEN(e, cls) += 1ull << cls;
+  if (!DEVICE && ALC_LEN(e, cls) >= KEEP_WORDS) {
+    heap_hand(e, cls);
+  }
+}
+"""
+        patches.append(
+            (
+                heap_free,
+                heap_free.replace("ALC_LEN(e, cls) >= KEEP_WORDS", "ALC_LEN(e, cls) >= CAP_WORDS"),
+            )
+        )
     for old, new in patches:
         if source.count(old) != 1:
             raise CompileError("Bend runtime changed; refusing an unreviewed embedding patch")
@@ -393,6 +437,7 @@ class BendBuildExt(build_ext):
                 generated.read_text(),
                 extension.name,
                 atomic_refcounts=extension.bend_atomic_refcounts,
+                constant_heap_threshold=extension.bend_constant_heap_threshold,
             )
         )
         sources = extension.sources

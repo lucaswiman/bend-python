@@ -16,6 +16,7 @@ setup(
             "module.bend",
             proofs=["PROOF.bend"],
             atomic_refcounts=False,
+            constant_heap_threshold=True,
         )
     ],
     cmdclass={"build_ext": BendBuildExt},
