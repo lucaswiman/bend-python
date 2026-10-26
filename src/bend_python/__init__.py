@@ -2,7 +2,7 @@
 
 from .library import get_include, library_path, vendor
 
-BEND_VERSION = "2.0.38"
+BEND_VERSION = "2.0.39"
 
 __all__ = [
     "BEND_VERSION",

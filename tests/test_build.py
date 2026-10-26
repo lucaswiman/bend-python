@@ -790,7 +790,7 @@ class CompilerDownloadTests(unittest.TestCase):
         release = self.root / "release"
         (release / "bend/bin").mkdir(parents=True)
         executable = release / "bend/bin/bend"
-        executable.write_text("#!/bin/sh\necho 'bend 2.0.38'\n")
+        executable.write_text("#!/bin/sh\necho 'bend 2.0.39'\n")
         executable.chmod(0o755)
         self.archive = self.root / "bend.tar.gz"
         subprocess.run(["tar", "-czf", str(self.archive), "-C", str(release), "bend"], check=True)
@@ -811,8 +811,8 @@ class CompilerDownloadTests(unittest.TestCase):
     def test_download_verifies_extracts_and_caches(self):
         with self.release(self.digest):
             executable = self.build_module._cached_compiler()
-        self.assertEqual(executable, self.cache / "bend-python/bend-2.0.38/bin/bend")
-        self.assertEqual(self.build_module._bend_version(str(executable)), "bend 2.0.38")
+        self.assertEqual(executable, self.cache / "bend-python/bend-2.0.39/bin/bend")
+        self.assertEqual(self.build_module._bend_version(str(executable)), "bend 2.0.39")
         self.archive.unlink()  # A second lookup must not download again.
         with self.release(self.digest):
             self.assertEqual(self.build_module._cached_compiler(), executable)
@@ -830,7 +830,7 @@ class CompilerDownloadTests(unittest.TestCase):
             unittest.mock.patch.dict(os.environ, {"BEND_PYTHON_DOWNLOAD": "0"}),
         ):
             self.assertIsNone(self.build_module._cached_compiler())
-        self.assertFalse((self.cache / "bend-python/bend-2.0.38").exists())
+        self.assertFalse((self.cache / "bend-python/bend-2.0.39").exists())
 
     def test_explicit_bend_must_match_the_pinned_version(self):
         from setuptools.errors import ExecError

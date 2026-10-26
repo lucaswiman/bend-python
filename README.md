@@ -50,7 +50,7 @@ OverflowError: can't convert negative value to unsigned int
 in parallel. Installed wheels need neither Bend nor a compiler.
 
 **Status: experimental.** Linux x86_64, CPython 3.10–3.14 including free-threaded
-3.14t, Bend pinned to 2.0.38. Bend 2 is young: its strings are linked lists of
+3.14t, Bend pinned to 2.0.39. Bend 2 is young: its strings are linked lists of
 characters, so text-heavy code is slow and memory-hungry. Benchmark before
 relying on it.
 
@@ -122,7 +122,7 @@ The canonical SDK effects satisfy it, and the example opts in. Exact runtime
 and initialization guards detect pinned-source drift; they do not verify
 arbitrary custom C or establish a C/CPython theorem.
 
-Bend 2.0.38 reports imported foreign and unsafe definitions as a failed proof
+Bend 2.0.39 reports imported foreign and unsafe definitions as a failed proof
 verdict, even when every filled law type-checks. The SDK permits only its
 recorded foreign dependency set and prints the original diagnostic. Application
 proofs default to strict checking. A proof that intentionally imports such
@@ -430,7 +430,7 @@ its evidence:
   cached; an instance whose dynamic heap allocation high-water mark exceeded
   32 MiB is released instead. The budget excludes the sparse runtime metadata
   prefix and does not bound total resident memory.
-- Bend's C runtime is private API. The build pins 2.0.38 and refuses to patch a
+- Bend's C runtime is private API. The build pins 2.0.39 and refuses to patch a
   runtime that has changed.
 
 ## Developing this repository

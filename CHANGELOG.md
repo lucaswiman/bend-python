@@ -5,7 +5,7 @@ All notable changes to `bend-python` are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). A release is published to PyPI only
 when its version has a section below.
 
-## [Unreleased]
+## [0.1.1] - Unreleased
 
 ### Added
 
@@ -37,7 +37,8 @@ when its version has a section below.
 
 ### Changed
 
-- Pin Bend 2.0.38 and adapt the private C runtime boundary. Proof gates reject
+- Pin Bend 2.0.39, including its fix for borrowing read-only lists with native
+  word fields. Retain the checked private C runtime boundary. Proof gates reject
   type errors and undeclared trust dependencies; effectful SDK laws retain an
   explicit, exact diagnostic trust set instead of treating the new checker's
   foreign-effect refusal as strict proof success.
@@ -82,5 +83,5 @@ when its version has a section below.
   for the typed adapters' argument checks.
 - Linux x86_64 support for CPython 3.10–3.14 and 3.14t.
 
-[Unreleased]: https://github.com/lucaswiman/bend-python/compare/v0.1.0...HEAD
+[0.1.1]: https://github.com/lucaswiman/bend-python/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/lucaswiman/bend-python/releases/tag/v0.1.0
