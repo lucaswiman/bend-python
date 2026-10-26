@@ -560,7 +560,8 @@ assert stats()[3:5] == (0, 0), stats()
                 generated = next((directory / "examples/build").glob("temp.*/bend_example.c"))
                 work = re.findall(
                     r"  WL_CASE\(FID_work(?:_k\d+)?\)(.*?)(?=\n#endif)",
-                    generated.read_text(), re.S,
+                    generated.read_text(),
+                    re.S,
                 )
                 self.assertIn("term_keep(e,", "".join(work))
                 self.run_python(directory, child)
