@@ -7,12 +7,12 @@ if [[ $(uname -s)-$(uname -m) != Linux-x86_64 ]]; then
   exit 1
 fi
 mkdir -p .tools
-archive=.tools/bend-2.0.38-linux-x64.tar.gz
+archive=.tools/bend-2.0.39-linux-x64.tar.gz
 if [[ ! -f $archive ]]; then
   curl --fail --location --output "$archive" \
-    https://github.com/bendlang/bend/releases/download/v2.0.38/bend-2.0.38-linux-x64.tar.gz
+    https://github.com/bendlang/bend/releases/download/v2.0.39/bend-2.0.39-linux-x64.tar.gz
 fi
-echo "f19d088b079c9e1a8834ecd153b7d58c11a5f8f9ab1bdb78dbc96a6bf49aaa81  $archive" | sha256sum --check
+echo "6cf462fd8f70b094a4950ebb709a9c4ffd8f1d1189d9cedf1fd63cd5d041c7ab  $archive" | sha256sum --check
 tar --warning=no-unknown-keyword -xzf "$archive" -C .tools
 export UV_CACHE_DIR="$PWD/.tools/uv-cache"
 export UV_PYTHON_INSTALL_DIR="$PWD/.tools/python"

@@ -26,7 +26,7 @@ from .proof_trust import SDK_PROOF_TRUST, classify_proof_check
 
 BEND_RELEASE = (
     f"https://github.com/bendlang/bend/releases/download/v{BEND_VERSION}/bend-{BEND_VERSION}-linux-x64.tar.gz",
-    "f19d088b079c9e1a8834ecd153b7d58c11a5f8f9ab1bdb78dbc96a6bf49aaa81",
+    "6cf462fd8f70b094a4950ebb709a9c4ffd8f1d1189d9cedf1fd63cd5d041c7ab",
 )
 
 
