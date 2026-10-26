@@ -1,4 +1,4 @@
-"""Exact trust policy for Bend 2.0.38 ``--check-only`` diagnostics.
+"""Exact trust policy for Bend 2.0.39 ``--check-only`` diagnostics.
 
 The checker validates filled definitions, types, and termination before reporting
 these dependencies. An accepted trust report is *not* ALL PROOFS CHECK, a BendTT

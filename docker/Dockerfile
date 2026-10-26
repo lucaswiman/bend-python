@@ -5,8 +5,8 @@ FROM ${MANYLINUX_IMAGE}
 
 RUN dnf --disablerepo='epel*' install --assumeyes clang && dnf clean all
 RUN curl --fail --location --retry 3 --output /tmp/bend.tar.gz \
-      https://github.com/bendlang/bend/releases/download/v2.0.38/bend-2.0.38-linux-x64.tar.gz \
-    && echo 'f19d088b079c9e1a8834ecd153b7d58c11a5f8f9ab1bdb78dbc96a6bf49aaa81  /tmp/bend.tar.gz' | sha256sum --check \
+      https://github.com/bendlang/bend/releases/download/v2.0.39/bend-2.0.39-linux-x64.tar.gz \
+    && echo '6cf462fd8f70b094a4950ebb709a9c4ffd8f1d1189d9cedf1fd63cd5d041c7ab  /tmp/bend.tar.gz' | sha256sum --check \
     && tar --warning=no-unknown-keyword -xzf /tmp/bend.tar.gz -C /opt \
     && rm /tmp/bend.tar.gz \
     && /opt/bend/bin/bend version
