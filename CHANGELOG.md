@@ -53,6 +53,9 @@ when its version has a section below.
 
 ### Fixed
 
+- Proof hooks use the prepared checkout's Python environment unless `PYTHON`
+  explicitly selects another interpreter, matching the bootstrap workflow.
+
 - Runtime cache eligibility now measures dynamic heap pages, excluding the
   sparse metadata prefix that previously caused every initialized context to
   be discarded. Large and failed contexts are still evicted.
