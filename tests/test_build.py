@@ -3,6 +3,7 @@
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -352,6 +353,38 @@ class BuildTests(unittest.TestCase):
         self.assertNotIn("CalledProcessError", output)
         self.assertNotIn("Traceback", output)
 
+    def test_proof_hook_uses_checkout_python_and_honors_override(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            checkout = Path(temporary)
+            for name in ("bend", "examples", "src"):
+                (checkout / name).symlink_to(ROOT / name, target_is_directory=True)
+            (checkout / "scripts").mkdir()
+            script = checkout / "scripts/check-proofs.sh"
+            shutil.copy2(ROOT / "scripts/check-proofs.sh", script)
+            local = checkout / ".venv/bin/python"
+            local.parent.mkdir(parents=True)
+            local.write_text(f'#!/bin/sh\nexec {shlex.quote(sys.executable)} "$@"\n')
+            local.chmod(0o755)
+            system = checkout / "bin/python3"
+            system.parent.mkdir()
+            system.write_text("#!/bin/sh\necho 'selected system Python' >&2\nexit 91\n")
+            system.chmod(0o755)
+            env = {**os.environ, "BEND": BEND, "PATH": f"{system.parent}:{os.environ['PATH']}"}
+            env.pop("PYTHON", None)
+            result = subprocess.run(
+                ["bash", str(script)], env=env, text=True, capture_output=True, timeout=60
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            result = subprocess.run(
+                ["bash", str(script)],
+                env={**env, "PYTHON": str(system)},
+                text=True,
+                capture_output=True,
+                timeout=10,
+            )
+            self.assertEqual(result.returncode, 91, result.stdout + result.stderr)
+            self.assertIn("selected system Python", result.stderr)
+
     def test_false_law_stops_build(self):
         directory, result = self.build(break_proof=True)
         self.assertNotEqual(result.returncode, 0)
@@ -517,8 +550,8 @@ assert stats()[3:6] == (0, 1, 0), stats()
 """,
         )
 
-    def test_shared_graph_survives_concurrent_reentry_and_callback_failure(self):
-        child = (
+    def test_shared_graph_survives_reentry_failure_and_finalizer_handoff(self):
+        reentry = (
             CACHE_SETUP
             + """
 import threading
@@ -551,46 +584,8 @@ assert module.graph(271, lambda checksum: checksum) == 271 * 270
 assert stats()[3:5] == (0, 0), stats()
 """
         )
-        for atomic_refcounts in (True, False):
-            with self.subTest(atomic_refcounts=atomic_refcounts):
-                directory, result = self.build(
-                    RFC_GRAPH_MODULE, native_cache_probe=True, atomic_refcounts=atomic_refcounts
-                )
-                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                generated = next((directory / "examples/build").glob("temp.*/bend_example.c"))
-                work = re.findall(
-                    r"  WL_CASE\(FID_work(?:_k\d+)?\)(.*?)(?=\n#endif)",
-                    generated.read_text(),
-                    re.S,
-                )
-                self.assertIn("term_keep(e,", "".join(work))
-                self.run_python(directory, child)
 
-    def test_allocator_threshold_boundaries_banking_and_reallocation(self):
-        child = """
-import ctypes
-import bend_example as module
-probe = ctypes.PyDLL(module.__file__).bendsym_allocator_probe
-probe.argtypes = [ctypes.c_uint32, ctypes.POINTER(ctypes.c_uint64)]
-probe.restype = ctypes.c_int
-for cls in (0, 7, 15, 16):
-    out = (ctypes.c_uint64 * 9)()
-    result = probe(cls, out)
-    assert result == 0, (cls, result, list(out))
-"""
-        for constant in (False, True):
-            for poison in (False, True):
-                with self.subTest(constant_heap_threshold=constant, poison=poison):
-                    flags = os.environ.get("CFLAGS", "") + (" -DBEND_POISON" if poison else "")
-                    with unittest.mock.patch.dict(os.environ, {"CFLAGS": flags}):
-                        directory, result = self.build(
-                            constant_heap_threshold=constant, native_allocator_probe=True
-                        )
-                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                    self.run_python(directory, child)
-
-    def test_cleanup_finalizer_hands_healthy_heap_to_another_thread(self):
-        child = (
+        finalizer = (
             CACHE_SETUP
             + """
 import threading
@@ -635,7 +630,39 @@ assert stats() == initial, (initial, stats())
                     RFC_GRAPH_MODULE, native_cache_probe=True, atomic_refcounts=atomic_refcounts
                 )
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.run_python(directory, child)
+                generated = next((directory / "examples/build").glob("temp.*/bend_example.c"))
+                work = re.findall(
+                    r"  WL_CASE\(FID_work(?:_k\d+)?\)(.*?)(?=\n#endif)",
+                    generated.read_text(),
+                    re.S,
+                )
+                self.assertIn("term_keep(e,", "".join(work))
+                for scenario, child in (("reentry", reentry), ("finalizer", finalizer)):
+                    with self.subTest(scenario=scenario):
+                        self.run_python(directory, child)
+
+    def test_allocator_threshold_boundaries_banking_and_reallocation(self):
+        child = """
+import ctypes
+import bend_example as module
+probe = ctypes.PyDLL(module.__file__).bendsym_allocator_probe
+probe.argtypes = [ctypes.c_uint32, ctypes.POINTER(ctypes.c_uint64)]
+probe.restype = ctypes.c_int
+for cls in (0, 7, 15, 16):
+    out = (ctypes.c_uint64 * 9)()
+    result = probe(cls, out)
+    assert result == 0, (cls, result, list(out))
+"""
+        for constant in (False, True):
+            for poison in (False, True):
+                with self.subTest(constant_heap_threshold=constant, poison=poison):
+                    flags = os.environ.get("CFLAGS", "") + (" -DBEND_POISON" if poison else "")
+                    with unittest.mock.patch.dict(os.environ, {"CFLAGS": flags}):
+                        directory, result = self.build(
+                            constant_heap_threshold=constant, native_allocator_probe=True
+                        )
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.run_python(directory, child)
 
     def test_forged_handles_are_rejected(self):
         # With this fixed seed, both forgeries decode outside the arena. Random
