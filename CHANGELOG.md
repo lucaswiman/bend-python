@@ -9,6 +9,9 @@ when its version has a section below.
 
 ### Added
 
+- Reproducible NumPy and PyTorch CPU/CUDA numerical benchmarks, with verified
+  P-core affinity, congestion gates, synchronized CUDA measurements, and
+  per-case correctness, storage identity and memory diagnostics.
 - Optional `BendExtension(..., constant_heap_threshold=True)` specialization for
   native effects that preserve the initialized CPU allocator policy. It removes
   one thread-local threshold read while retaining the 32,768-word policy. The
