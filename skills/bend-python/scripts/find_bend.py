@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Print the path of the pinned Bend compiler that bend-python builds with.
+"""Print the path of the selected Bend 2 compiler that bend-python builds with.
 
 Run it with the Python environment that has bend-python installed. It honours
 $BEND, then a matching `bend` on PATH, then downloads the checksum-verified

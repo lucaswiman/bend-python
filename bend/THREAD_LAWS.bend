@@ -13,7 +13,7 @@ law accepted_effect_attached:
   {state == Thread.Attached{} : Thread.State}
 
 # Inside native evaluation, no Python effect, save, restore, lease operation,
-# or nested entry is accepted: the only way out is Leave.
+# or nested entry is accepted: the only way out is NativeLeave.
 law native_effect_rejected:
   for state: Thread.State
   for native: {Thread.is_native(state) == True{} : Bool}
@@ -32,7 +32,7 @@ law save_restore:
   {Thread.run([Thread.Save{}, Thread.Restore{}], Thread.Attached{}) == Some{Thread.Attached{}} : Maybe<Thread.State>}
 
 # Both detach policies and both outcomes (a native failure also leaves through
-# Leave) return to the attached state.
+# NativeLeave) return to the attached state.
 law native_returns_attached:
   for detach: Bool
   for outcome: Thread.Outcome
@@ -45,7 +45,7 @@ law native_then_effect_accepted:
 
 law release_before_restore_rejected:
   for outcome: Thread.Outcome
-  {Thread.run([Thread.Save{}, Thread.Enter{}, Thread.Leave{outcome}, Thread.PythonEffect{}], Thread.Attached{}) == None{} : Maybe<Thread.State>}
+  {Thread.run([Thread.Save{}, Thread.Enter{}, Thread.NativeLeave{outcome}, Thread.PythonEffect{}], Thread.Attached{}) == None{} : Maybe<Thread.State>}
 
 law free_threaded_detaches:
   for release_gil: Bool

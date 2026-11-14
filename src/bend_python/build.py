@@ -1,4 +1,4 @@
-"""Setuptools integration for the pinned Bend native compiler."""
+"""Setuptools integration for the Bend 2 native compiler."""
 
 from copy import copy
 import hashlib
@@ -26,7 +26,7 @@ from .proof_trust import SDK_PROOF_TRUST, classify_proof_check
 
 BEND_RELEASE = (
     f"https://github.com/bendlang/bend/releases/download/v{BEND_VERSION}/bend-{BEND_VERSION}-linux-x64.tar.gz",
-    "6cf462fd8f70b094a4950ebb709a9c4ffd8f1d1189d9cedf1fd63cd5d041c7ab",
+    "c9ff8d67bd903fb6ad9a26b43d8a62c01021de82a44d55ce4a3dcd4732113d6b",
 )
 
 
@@ -82,13 +82,17 @@ class BendExtension(Extension):
 
 def _bend_version(bend):
     try:
-        return subprocess.run([bend, "version"], text=True, capture_output=True).stdout.strip()
+        result = subprocess.run([bend, "version"], text=True, capture_output=True)
     except OSError:
         return None
+    version = result.stdout.strip()
+    if result.returncode == 0 and re.fullmatch(r"bend 2\.\d+\.\d+", version):
+        return version
+    return None
 
 
 def _cached_compiler():
-    """The pinned release, downloaded and checksum-verified into the user cache."""
+    """The tested default release, checksum-verified into the user cache."""
     cache = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
     target = cache / "bend-python" / f"bend-{BEND_VERSION}"
     executable = target / "bin" / "bend"
@@ -127,23 +131,21 @@ def _cached_compiler():
 
 def _compiler():
     """Find Bend: $BEND, this checkout's bootstrap, PATH, or the downloaded release."""
-    expected = f"bend {BEND_VERSION}"
     explicit = os.environ.get("BEND")
     if explicit:
-        version = _bend_version(explicit)
-        if version != expected:
-            raise ExecError(f"Expected {expected} at BEND={explicit!r}, got {version!r}")
+        if not _bend_version(explicit):
+            raise ExecError(f"Expected a working Bend 2 compiler at BEND={explicit!r}")
         return explicit
     # Never search relative to the cwd; only an SDK checkout has this directory.
     local = Path(__file__).resolve().parents[2] / ".tools/bend/bin/bend"
     for candidate in (local if local.exists() else None, shutil.which("bend")):
-        if candidate and _bend_version(str(candidate)) == expected:
+        if candidate and _bend_version(str(candidate)):
             return str(candidate)
     cached = _cached_compiler()
-    if cached and _bend_version(str(cached)) == expected:
+    if cached and _bend_version(str(cached)):
         return str(cached)
     raise ExecError(
-        f"Cannot find {expected}: set BEND to its executable, or allow the "
+        "Cannot find Bend 2: set BEND to its executable, or allow the "
         "automatic download (unset BEND_PYTHON_DOWNLOAD=0)"
     )
 
@@ -212,6 +214,12 @@ def check_proof(bend, proof, *, trust=None, quiet=False):
 
 
 def _patch_runtime(source, name, *, atomic_refcounts=True, constant_heap_threshold=False):
+    # 2.0.40 removes an unused allocator row and this poison comment. Accept
+    # both reviewed spellings before checking the complete runtime sections.
+    source = source.replace(
+        "static u64    ALC[CUBE_T + 1][3 * NCLS_ALL] __attribute__((aligned(128)));",
+        "static u64    ALC[CUBE_T][3 * NCLS_ALL] __attribute__((aligned(128)));",
+    ).replace("#ifdef BEND_POISON // a later read of a freed block fails\n", "#ifdef BEND_POISON\n")
     # corpus_lay records growth. Preserve it so cleanup unmaps the full lease.
     if source.count("  corpus_size = size;\n  a32_store_rel(a32_at(H, H_CAP), (u32)cap);") != 1:
         raise CompileError("Bend heap-size tracking changed")
@@ -221,7 +229,7 @@ def _patch_runtime(source, name, *, atomic_refcounts=True, constant_heap_thresho
   _exit(1);
 }"""
     cpu_globals = """static u64*    CORPUS;
-static u64    ALC[CUBE_T + 1][3 * NCLS_ALL] __attribute__((aligned(128)));
+static u64    ALC[CUBE_T][3 * NCLS_ALL] __attribute__((aligned(128)));
 static u32    KEEP_WORDS;
 static u32    CUBE_LOG = 7;
 static u32    bank_lock;
@@ -320,7 +328,7 @@ static u32             pool_size;"""
   if (err_peek(e.mem)) {
     return;
   }
-#ifdef BEND_POISON // a later read of a freed block fails
+#ifdef BEND_POISON
   for (u64 i = 1; i < 1ull << cls; i += 1) {
     e.mem[loc + i] = RFC_BIT | TAG_CTR << 56 | LOC_MASK;
   }
@@ -399,7 +407,7 @@ class BendBuildExt(build_ext):
         if not isinstance(extension, BendExtension):
             return super().build_extension(extension)
         if sys.platform != "linux":
-            raise PlatformError("The pinned Bend embedding runtime currently supports Linux only")
+            raise PlatformError("The Bend embedding runtime currently supports Linux only")
         bend = _compiler()
         if not Path(extension.bend_source).is_file():
             raise CompileError(f"Bend source file not found: {extension.bend_source}")

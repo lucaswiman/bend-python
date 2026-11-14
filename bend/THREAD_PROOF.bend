@@ -65,9 +65,9 @@ def Laws.native_only_leaves(state, operation, native, staying):
       not_true({Thread.step(Thread.Attached{}, op) == None{} : Maybe<Thread.State>}, native)
     case Thread.Detached{} op:
       not_true({Thread.step(Thread.Detached{}, op) == None{} : Maybe<Thread.State>}, native)
-    case Thread.AttachedNative{} Thread.Leave{outcome}:
+    case Thread.AttachedNative{} Thread.NativeLeave{outcome}:
       not_false({Some{Thread.Attached{}} == None{} : Maybe<Thread.State>}, staying)
-    case Thread.DetachedNative{} Thread.Leave{outcome}:
+    case Thread.DetachedNative{} Thread.NativeLeave{outcome}:
       not_false({Some{Thread.Detached{}} == None{} : Maybe<Thread.State>}, staying)
     case Thread.AttachedNative{} Thread.Save{}:
       {==}
@@ -94,7 +94,7 @@ def Laws.native_only_leaves(state, operation, native, staying):
     case Thread.DetachedNative{} Thread.ReturnLease{_, _, _, _}:
       {==}
 
-# A Python effect is not Leave, so this is a special case of native_only_leaves.
+# A Python effect is not NativeLeave, so this is a special case of native_only_leaves.
 def Laws.native_effect_rejected(state, native):
   Laws.native_only_leaves(state, Thread.PythonEffect{}, native, {==})
 

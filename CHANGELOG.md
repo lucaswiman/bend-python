@@ -40,8 +40,9 @@ when its version has a section below.
 
 ### Changed
 
-- Pin Bend 2.0.39, including its fix for borrowing read-only lists with native
-  word fields. Retain the checked private C runtime boundary. Proof gates reject
+- Test with Bend 2.0.40 and use its checksum-verified release by default.
+  Explicit `BEND` and PATH compilers may use other Bend 2 versions; proof and
+  runtime-source compatibility gates still apply. Proof gates reject
   type errors and undeclared trust dependencies; effectful SDK laws retain an
   explicit, exact diagnostic trust set instead of treating the new checker's
   foreign-effect refusal as strict proof success.
@@ -55,6 +56,9 @@ when its version has a section below.
   Bend shape policy.
 
 ### Fixed
+
+- Proof hooks use the prepared checkout's Python environment unless `PYTHON`
+  explicitly selects another interpreter, matching the bootstrap workflow.
 
 - Runtime cache eligibility now measures dynamic heap pages, excluding the
   sparse metadata prefix that previously caused every initialized context to

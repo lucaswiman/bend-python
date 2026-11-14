@@ -1,4 +1,4 @@
-"""Exact trust policy for Bend 2.0.39 ``--check-only`` diagnostics.
+"""Exact trust policy for Bend 2.0.40 ``--check-only`` diagnostics.
 
 The checker validates filled definitions, types, and termination before reporting
 these dependencies. An accepted trust report is *not* ALL PROOFS CHECK, a BendTT
@@ -111,7 +111,7 @@ def classify_proof_check(
     stderr: str,
     expected: Mapping[str, Collection[str]] | None = None,
 ) -> str:
-    """Classify one pinned ``--check-only`` result, or raise ``ValueError``.
+    """Classify one exact ``--check-only`` result, or raise ``ValueError``.
 
     Only an exact, complete trust-only refusal can match a declared policy. Pure
     roots require the strict success output. No source is rewritten, no law is

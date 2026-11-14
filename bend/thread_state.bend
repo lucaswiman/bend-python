@@ -6,7 +6,7 @@ import Base
 #
 # The native states cover bp_native between setting and clearing bp_current:
 # Bend evaluation, where the C bridge makes no Python API call. A native
-# failure longjmps back inside that window, so it also leaves via Leave.
+# failure longjmps back inside that window, so it also leaves via NativeLeave.
 type State is Data:
   Attached{}
   Detached{}
@@ -23,7 +23,7 @@ type Operation is Data:
   Save{}
   Restore{}
   Enter{}
-  Leave{outcome: Outcome}
+  NativeLeave{outcome: Outcome}
   PythonEffect{}
   AcquireLease{slot: Nat}
   ReturnLease{slot: Nat, outcome: Outcome, small_heap: Bool, cache_space: Bool}
@@ -39,7 +39,7 @@ def is_native(state: State) -> Bool:
 
 def is_leave(operation: Operation) -> Bool:
   match operation:
-    case Leave{_}:
+    case NativeLeave{_}:
       True{}
     case _:
       False{}
@@ -57,9 +57,9 @@ def step(state: State, operation: Operation) -> Maybe<State>:
       Some{AttachedNative{}}
     case Detached{} Enter{}:
       Some{DetachedNative{}}
-    case AttachedNative{} Leave{_}:
+    case AttachedNative{} NativeLeave{_}:
       Some{Attached{}}
-    case DetachedNative{} Leave{_}:
+    case DetachedNative{} NativeLeave{_}:
       Some{Detached{}}
     case _ _:
       None{}
@@ -80,9 +80,9 @@ def detaches(release_gil: Bool, free_threaded: Bool) -> Bool:
 def native_call(detach: Bool, outcome: Outcome) -> List<Operation>:
   match detach:
     case True{}:
-      [Save{}, Enter{}, Leave{outcome}, Restore{}]
+      [Save{}, Enter{}, NativeLeave{outcome}, Restore{}]
     case False{}:
-      [Enter{}, Leave{outcome}]
+      [Enter{}, NativeLeave{outcome}]
 
 # Each slot denotes one distinct runtime allocation. The C cache must preserve
 # that identity and perform acquisition/return atomically; these are trust inputs.

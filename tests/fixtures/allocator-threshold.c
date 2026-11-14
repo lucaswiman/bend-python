@@ -1,6 +1,6 @@
 /* Test-only entry into the actual generated allocator; no production ABI. */
 __attribute__((visibility("default")))
-int bendsym_allocator_probe(u32 cls, u64 *out) {
+int bendsym_allocator_probe(u32 cls) {
   if (bp_current || cls > 16) return 900;
   BpRuntime *runtime = NULL;
   if (posix_memalign((void **)&runtime, _Alignof(BpRuntime), sizeof(*runtime))) return 901;
@@ -32,20 +32,17 @@ int bendsym_allocator_probe(u32 cls, u64 *out) {
   }
   REQUIRE(ALC_AT(e, cls) == 0 && ALC_LEN(e, cls) == 0, 104);
   for (u32 i = 0; i+1 < n; ++i) heap_free(e, cls, locations[i]);
-  out[0] = CAP_WORDS;
-  out[1] = ALC_LEN(e, cls);
   REQUIRE(ALC_LEN(e, cls) == ((u64)(n-1) << cls) && ALC_COLD(e, cls) == 0, 105);
   heap_free(e, cls, locations[n-1]);
   REQUIRE(ALC_AT(e, cls) == 0 && ALC_LEN(e, cls) == 0, 106);
-  REQUIRE(ALC_COLD(e, cls) == locations[n-1] && bank_at(e.mem, cls)->rd == 0, 107);
-  out[2] = ALC_LEN(e, cls);
-  out[3] = ALC_COLD(e, cls) != 0;
-  out[4] = bank_at(e.mem, cls)->rd;
+  /* 2.0.40 banks large blocks immediately; older runtimes park them in COLD. */
+  bool direct = (1ull << cls) >= CAP_WORDS && ALC_COLD(e, cls) == 0;
+  REQUIRE(ALC_COLD(e, cls) == (direct ? 0 : locations[n-1]) &&
+          bank_at(e.mem, cls)->rd == (direct ? 1 : 0), 107);
   for (u32 i = n; i < 2*n; ++i) heap_free(e, cls, locations[i]);
   REQUIRE(ALC_AT(e, cls) == 0 && ALC_LEN(e, cls) == 0, 108);
-  REQUIRE(ALC_COLD(e, cls) == locations[2*n-1] && bank_at(e.mem, cls)->rd == 1, 109);
-  out[5] = bank_at(e.mem, cls)->rd;
-  u64 checksum = 0;
+  REQUIRE(ALC_COLD(e, cls) == (direct ? 0 : locations[2*n-1]) &&
+          bank_at(e.mem, cls)->rd == (direct ? 2 : 1), 109);
   for (u32 i = 0; i < 2*n; ++i) {
     u64 loc = heap_alloc(e, cls);
     REQUIRE(loc == locations[2*n-i-1], 110);
@@ -57,14 +54,10 @@ int bendsym_allocator_probe(u32 cls, u64 *out) {
       #endif
       e.mem[loc+1] = 0x654300000000ull + i;
     }
-    checksum += loc - locations[0];
     e.mem[loc] = 0xabcdef000000ull + i;
   }
   REQUIRE(ALC_AT(e, cls) == 0 && ALC_LEN(e, cls) == 0 && ALC_COLD(e, cls) == 0, 113);
   REQUIRE(bank_at(e.mem, cls)->rd == 0, 114);
-  out[6] = 2*n;
-  out[7] = checksum;
-  out[8] = ((u64)n << cls);
   /* On this CPU compilation err_peek is constant false. Its device-only
      branch cannot be exercised by writing a fake error into host metadata. */
 done:

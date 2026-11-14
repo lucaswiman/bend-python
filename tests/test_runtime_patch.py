@@ -37,6 +37,7 @@ class RuntimePatchTests(unittest.TestCase):
         changes = [
             ("static u64*    CORPUS;", "static void* CORPUS;"),
             ("3 * NCLS_ALL", "3 * UNKNOWN_CLASSES"),
+            ("ALC[CUBE_T + 1]", "ALC[CUBE_T + 2]"),
             ("static DEV Term*  io_stk;", "static void* io_stk;"),
             ("  if (err_claim()) fflush(stdout);", "  fflush(stdout);"),
             (
