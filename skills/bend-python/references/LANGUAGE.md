@@ -1,6 +1,6 @@
 # Bend 2 for bend-python work
 
-The authoritative text is `bend guide` (pinned 2.0.28) and `bend base`. This
+The authoritative text is `bend guide` (pinned 2.0.38) and `bend base`. This
 file condenses them and adds what the checker actually rejects, with fixes,
 learned by building a computer algebra system in Bend.
 

@@ -1,0 +1,172 @@
+{
+  "py314t": {
+    "ENVIRONMENT": {
+      "python": "3.14.3 free-threading build (main, Feb 12 2026, 00:46:06) [Clang 21.1.4 ]",
+      "executable": "/home/lucaswiman/personal/bendsym/.venv/bin/python",
+      "SDK": "/tmp/bendsym-bend2038-sdk-post-cleanup-py314t/src/bend_python/__init__.py",
+      "BEND_VERSION": "2.0.38",
+      "native": "/tmp/bendsym-bend2038-sdk-post-cleanup-py314t/examples/bend_example.cpython-314t-x86_64-linux-gnu.so",
+      "Py_GIL_DISABLED": 1,
+      "optional": {
+        "numpy": false,
+        "scipy": false,
+        "torch": false
+      },
+      "native_sha256": "4b337c871ced7058d947bdf8008c58c00200935971a0c4bfd96f5dc589337b5a",
+      "copy_matches_input": true
+    },
+    "proof-script": {
+      "argv": [
+        "bash",
+        "scripts/check-proofs.sh"
+      ],
+      "cwd": "/tmp/bendsym-bend2038-sdk-post-cleanup-py314t",
+      "environment": {
+        "BEND": "/tmp/bendsym-bend2038-toolchain/bend/bin/bend",
+        "BEND_PYTHON_DOWNLOAD": "0",
+        "CC": "clang",
+        "PYTHONPATH": "/tmp/bendsym-bend2038-sdk-post-cleanup-py314t/src:/tmp/bendsym-bend2038-sdk-post-cleanup-py314t/examples",
+        "PYTHONNOUSERSITE": "1",
+        "PYTHON": "/home/lucaswiman/personal/bendsym/.venv/bin/python"
+      },
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 0.5650925636291504,
+      "log_sha256": "aa1ad1721f90cd086c7a557e1ff9357225472056dce7076c02236f7873bdfd7a",
+      "compiler_sha256": "98395758bc911af94c15a67bf42d35b6c3e029562c447b4f4a843e3ef6e243f0"
+    },
+    "suite": {
+      "argv": [
+        "/home/lucaswiman/personal/bendsym/.venv/bin/python",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests",
+        "-v"
+      ],
+      "cwd": "/tmp/bendsym-bend2038-sdk-post-cleanup-py314t",
+      "environment": {
+        "BEND": "/tmp/bendsym-bend2038-toolchain/bend/bin/bend",
+        "BEND_PYTHON_DOWNLOAD": "0",
+        "CC": "clang",
+        "PYTHONPATH": "/tmp/bendsym-bend2038-sdk-post-cleanup-py314t/src:/tmp/bendsym-bend2038-sdk-post-cleanup-py314t/examples",
+        "PYTHONNOUSERSITE": "1",
+        "PYTHON": "/home/lucaswiman/personal/bendsym/.venv/bin/python"
+      },
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 22.713900804519653,
+      "log_sha256": "6cb9777c16355423fc5de11ed7cd330928dc4dd3f944ee811b2b66f54bf5fbb9",
+      "compiler_sha256": "98395758bc911af94c15a67bf42d35b6c3e029562c447b4f4a843e3ef6e243f0"
+    },
+    "examples-force-build": {
+      "argv": [
+        "/home/lucaswiman/personal/bendsym/.venv/bin/python",
+        "setup.py",
+        "build_ext",
+        "--inplace",
+        "--force"
+      ],
+      "cwd": "/tmp/bendsym-bend2038-sdk-post-cleanup-py314t/examples",
+      "environment": {
+        "BEND": "/tmp/bendsym-bend2038-toolchain/bend/bin/bend",
+        "BEND_PYTHON_DOWNLOAD": "0",
+        "CC": "clang",
+        "PYTHONPATH": "/tmp/bendsym-bend2038-sdk-post-cleanup-py314t/src:/tmp/bendsym-bend2038-sdk-post-cleanup-py314t/examples",
+        "PYTHONNOUSERSITE": "1",
+        "PYTHON": "/home/lucaswiman/personal/bendsym/.venv/bin/python"
+      },
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 3.1704556941986084,
+      "log_sha256": "483d356e0e7d30a4268363bddc1ebfa7626a3515268f6ee3f7003c88ccac529e",
+      "compiler_sha256": "98395758bc911af94c15a67bf42d35b6c3e029562c447b4f4a843e3ef6e243f0"
+    }
+  },
+  "py311": {
+    "ENVIRONMENT": {
+      "python": "3.11.14 (main, Feb 12 2026, 00:42:50) [Clang 21.1.4 ]",
+      "executable": "/tmp/bendsym-bend2038-py311-env/bin/python",
+      "SDK": "/tmp/bendsym-bend2038-sdk-post-cleanup-py311/src/bend_python/__init__.py",
+      "BEND_VERSION": "2.0.38",
+      "native": "/tmp/bendsym-bend2038-sdk-post-cleanup-py311/examples/bend_example.cpython-311-x86_64-linux-gnu.so",
+      "Py_GIL_DISABLED": null,
+      "optional": {
+        "numpy": false,
+        "scipy": false,
+        "torch": false
+      },
+      "native_sha256": "3adedf3402d43eccd09fc2c649ce0e2b0e543ca5ab8cdbb191edb6a6d9cf4ba8",
+      "copy_matches_input": true
+    },
+    "proof-script": {
+      "argv": [
+        "bash",
+        "scripts/check-proofs.sh"
+      ],
+      "cwd": "/tmp/bendsym-bend2038-sdk-post-cleanup-py311",
+      "environment": {
+        "BEND": "/tmp/bendsym-bend2038-toolchain/bend/bin/bend",
+        "BEND_PYTHON_DOWNLOAD": "0",
+        "CC": "clang",
+        "PYTHONPATH": "/tmp/bendsym-bend2038-sdk-post-cleanup-py311/src:/tmp/bendsym-bend2038-sdk-post-cleanup-py311/examples",
+        "PYTHONNOUSERSITE": "1",
+        "PYTHON": "/tmp/bendsym-bend2038-py311-env/bin/python"
+      },
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 0.5152368545532227,
+      "log_sha256": "aa1ad1721f90cd086c7a557e1ff9357225472056dce7076c02236f7873bdfd7a",
+      "compiler_sha256": "98395758bc911af94c15a67bf42d35b6c3e029562c447b4f4a843e3ef6e243f0"
+    },
+    "suite": {
+      "argv": [
+        "/tmp/bendsym-bend2038-py311-env/bin/python",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests",
+        "-v"
+      ],
+      "cwd": "/tmp/bendsym-bend2038-sdk-post-cleanup-py311",
+      "environment": {
+        "BEND": "/tmp/bendsym-bend2038-toolchain/bend/bin/bend",
+        "BEND_PYTHON_DOWNLOAD": "0",
+        "CC": "clang",
+        "PYTHONPATH": "/tmp/bendsym-bend2038-sdk-post-cleanup-py311/src:/tmp/bendsym-bend2038-sdk-post-cleanup-py311/examples",
+        "PYTHONNOUSERSITE": "1",
+        "PYTHON": "/tmp/bendsym-bend2038-py311-env/bin/python"
+      },
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 22.311129331588745,
+      "log_sha256": "67988bb8d2ed95847f5a8286f6f599039faec4623258433776eb06d0d089b007",
+      "compiler_sha256": "98395758bc911af94c15a67bf42d35b6c3e029562c447b4f4a843e3ef6e243f0"
+    },
+    "examples-force-build": {
+      "argv": [
+        "/tmp/bendsym-bend2038-py311-env/bin/python",
+        "setup.py",
+        "build_ext",
+        "--inplace",
+        "--force"
+      ],
+      "cwd": "/tmp/bendsym-bend2038-sdk-post-cleanup-py311/examples",
+      "environment": {
+        "BEND": "/tmp/bendsym-bend2038-toolchain/bend/bin/bend",
+        "BEND_PYTHON_DOWNLOAD": "0",
+        "CC": "clang",
+        "PYTHONPATH": "/tmp/bendsym-bend2038-sdk-post-cleanup-py311/src:/tmp/bendsym-bend2038-sdk-post-cleanup-py311/examples",
+        "PYTHONNOUSERSITE": "1",
+        "PYTHON": "/tmp/bendsym-bend2038-py311-env/bin/python"
+      },
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 3.021042585372925,
+      "log_sha256": "240b21153638aeab1af4f30f94c2b4bc87715d5bf17ebb118bc6ea5e5087ddba",
+      "compiler_sha256": "98395758bc911af94c15a67bf42d35b6c3e029562c447b4f4a843e3ef6e243f0"
+    }
+  }
+}

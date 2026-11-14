@@ -59,9 +59,9 @@ mypkg = ["*.bend"]
   the sdist with `MANIFEST.in`). Installed wheels need neither Bend nor Clang.
 - Setuptools is the only supported backend. The extension name must be a dotted
   identifier (`mypkg._core`).
-- The compiler: `$BEND` (must report `bend 2.0.28`), else `bend` on PATH at that
+- The compiler: `$BEND` (must report `bend 2.0.38`), else `bend` on PATH at that
   version, else a checksum-verified download cached in
-  `~/.cache/bend-python/bend-2.0.28/bin/bend`. `BEND_PYTHON_DOWNLOAD=0` forbids
+  `~/.cache/bend-python/bend-2.0.38/bin/bend`. `BEND_PYTHON_DOWNLOAD=0` forbids
   the download.
 - The build: checks the SDK's and your proofs, generates C, patches the runtime
   for per-call instances, compiles with Clang.
@@ -174,14 +174,14 @@ Limits:
   exhaustion kill the process.
 - Each active instance reserves about 10 GiB of virtual memory; `ulimit -v` or
   strict overcommit can make calls fail. Up to eight idle instances are cached.
-- Bend's runtime is private API; the SDK pins 2.0.28.
+- Bend's runtime is private API; the SDK pins 2.0.38.
 
 ## 6. Troubleshooting
 
 | Symptom | Fix |
 |---|---|
 | `error: Bend proof check failed: PROOF.bend` | Run `bend PROOF.bend` for the diagnostic |
-| `Cannot find bend 2.0.28` | Allow the download or set `BEND` |
+| `Cannot find bend 2.0.38` | Allow the download or set `BEND` |
 | Build cannot find Clang | Set `CC=clang` (Clang 14+) |
 | `ValueError` about a handle | A handle escaped its call; never cache `Python.Object` |
 | `TypeError` from a typed export | Wrong argument count, or keywords given |

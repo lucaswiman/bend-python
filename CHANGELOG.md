@@ -29,6 +29,10 @@ when its version has a section below.
 
 ### Changed
 
+- Pin Bend 2.0.38 and adapt the private C runtime boundary. Proof gates reject
+  type errors and undeclared trust dependencies; effectful SDK laws retain an
+  explicit, exact diagnostic trust set instead of treating the new checker's
+  foreign-effect refusal as strict proof success.
 - Closed-template maps avoid per-element successor objects; both map paths use
   incremental strided traversal with constant storage per axis.
 - Positional Python calls use vectorcall, and native object identity avoids

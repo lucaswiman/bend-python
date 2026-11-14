@@ -303,7 +303,8 @@ __attribute__((visibility("default"))) void bp_test_interrupt_after_store(void) 
         self.assertEqual(bend_example.square(7), 49)
 
     def test_build_rejects_readonly_writes_and_inexact_map_plans(self):
-        from bend_python.build import _compiler
+        from bend_python.build import _compiler, check_proof
+        from bend_python.proof_trust import SDK_PROOF_TRUST
 
         prelude = (
             "import Base\nimport ./bend/python.bend as Python\n"
@@ -340,6 +341,18 @@ __attribute__((visibility("default"))) void bp_test_interrupt_after_store(void) 
             with self.subTest(contract=name):
                 path = self.path / "contract.bend"
                 path.write_text(prelude + contract)
+                if name == "valid":
+                    # This root imports the SDK under bend/, without selector laws.
+                    # Its exact 67-name foreign closure is the TENSOR_PROOF policy.
+                    trust = {
+                        category: tuple("bend/" + label for label in labels)
+                        for category, labels in SDK_PROOF_TRUST["TENSOR_PROOF.bend"].items()
+                    }
+                    self.assertEqual(
+                        check_proof(_compiler(), path, trust=trust),
+                        "typed_with_declared_trust_boundary",
+                    )
+                    continue
                 result = subprocess.run(
                     [_compiler(), str(path), "--check-only"],
                     capture_output=True,
@@ -347,12 +360,9 @@ __attribute__((visibility("default"))) void bp_test_interrupt_after_store(void) 
                     timeout=30,
                 )
                 output = result.stdout + result.stderr
-                if name == "valid":
-                    self.assertEqual(result.returncode, 0, output)
-                else:
-                    self.assertNotEqual(result.returncode, 0, output)
-                    self.assertIn("expected :", output)
-                    self.assertIn("observed :", output)
+                self.assertNotEqual(result.returncode, 0, output)
+                self.assertIn("expected :", output)
+                self.assertIn("observed :", output)
 
     def test_native_permissions_and_checked_indexed_write(self):
         for operation, exception, counts in (

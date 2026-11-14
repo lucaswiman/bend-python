@@ -1,0 +1,30 @@
+{
+  "scope": "Formatting follow-up to 69eca764; prior validation receipts remain unchanged. Remote rerun pending.",
+  "base_commit": "69eca76419984d44f1bbeb0d1e3f279585325b63",
+  "CI_run": "https://github.com/lucaswiman/bend-python/actions/runs/39723822228",
+  "lint_failure": "Pinned Ruff0.16.9 rewrote split-string constants and formatted README example. Constants are now explicit tuples.",
+  "manylinux_cp312_failure": "EPEL repository metadata fetch failed during Docker dnf clang installation; no SDK/Python compilation was reached. Docker recipe unchanged for rerun.",
+  "source_identity": {
+    "base_commit": "69eca76419984d44f1bbeb0d1e3f279585325b63",
+    "SDK_PROOF_TRUST_canonical_JSON_sha256": "53270b24567c758d04c55cab3da01f53442f4d4126435a073e4e7f6db8f0a321",
+    "all_trust_constant_values_identical": true,
+    "all_function_ASTs_identical": true,
+    "current_parser_sha256": "7f6327547a50c3b5a5d13e8ec4e3c2173174e0d10441cb133c6581c2e4cf1b76",
+    "Docker_recipe_unchanged": true,
+    "scope": "Formatting only; no trust labels, classifier functions, runtime code, or Docker recipe changed"
+  },
+  "local_checks": {
+    "pinned_prek": "0.5.3; all hooks passed with Bend proof hook skipped",
+    "ruff_hook_revision": "a56c0b927e6465d37cae3e97d35d4d18ab2b96cd",
+    "proof_trust_tests": {
+      "passed": 9,
+      "log_sha256": "642e0467d630ecd72e6a69140035ee39c435f8fc9c6c3689e48ee0b50a496b13"
+    },
+    "git_diff_check": "passed"
+  },
+  "preserved_original_log_sha256": {
+    "lint-original.log": "4f699aecbe07c87033ccb0caba06c0cd6c958dc08731e004c45f61fb78d94bc9",
+    "cp312-original.log": "6574c9f16f6400c0dd7baa61d23a9efae2c4b547d4774026c9471cd3efd2d2be",
+    "cp311-original.log": "9a80b53ba80090672362b5c1fe1f47c7a75ca56488d68c86eebe6e850db209f4"
+  }
+}
