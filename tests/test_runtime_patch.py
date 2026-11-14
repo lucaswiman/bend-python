@@ -116,6 +116,61 @@ class RuntimePatchTests(unittest.TestCase):
             with self.subTest(extra=extra[:50]), self.assertRaises(CompileError):
                 _patch_runtime(self.source + extra, "fixture.module")
 
+    def test_constant_heap_threshold_changes_only_one_comparison(self):
+        self.assertIs(BendExtension("fixture", "module.bend").bend_constant_heap_threshold, False)
+        self.assertIs(
+            BendExtension(
+                "fixture", "module.bend", constant_heap_threshold=True
+            ).bend_constant_heap_threshold,
+            True,
+        )
+        with self.assertRaisesRegex(TypeError, "constant_heap_threshold must be a bool"):
+            BendExtension("fixture", "module.bend", constant_heap_threshold="True")
+        for atomic in (True, False):
+            with self.subTest(atomic_refcounts=atomic):
+                default = _patch_runtime(self.source, "fixture.module", atomic_refcounts=atomic)
+                self.assertEqual(
+                    default,
+                    _patch_runtime(
+                        self.source,
+                        "fixture.module",
+                        atomic_refcounts=atomic,
+                        constant_heap_threshold=False,
+                    ),
+                )
+                self.assertEqual(
+                    default.replace(
+                        "ALC_LEN(e, cls) >= KEEP_WORDS", "ALC_LEN(e, cls) >= CAP_WORDS"
+                    ),
+                    _patch_runtime(
+                        self.source,
+                        "fixture.module",
+                        atomic_refcounts=atomic,
+                        constant_heap_threshold=True,
+                    ),
+                )
+
+    def test_changed_heap_threshold_contract_is_rejected_when_opted_in(self):
+        start = self.source.index("INLINE void heap_free(Env e, u32 cls, u64 loc) {")
+        heap_free = self.source[start : self.source.index("\n}\n", start) + 3]
+        for old, new in [
+            ("#define CAP_WORDS 32768\n", "#define CAP_WORDS 65536\n"),
+            ("  KEEP_WORDS = gpu ? CHUNK : CAP_WORDS;\n", "  KEEP_WORDS = CHUNK;\n"),
+            (
+                "    if (CORPUS == NULL) {\n      corpus_setup(false, 1, 0);\n",
+                "    if (CORPUS == NULL) {\n      corpus_setup(true, 1, 0);\n",
+            ),
+            (
+                heap_free,
+                heap_free.replace("  e.mem[loc]       = ALC_AT(e, cls);", "  e.mem[loc] = 0;"),
+            ),
+        ]:
+            for changed in (self.source.replace(old, new), self.source + old):
+                with self.subTest(section=old, duplicate=changed.endswith(old)):
+                    _patch_runtime(changed, "fixture.module")
+                    with self.assertRaises(CompileError):
+                        _patch_runtime(changed, "fixture.module", constant_heap_threshold=True)
+
 
 if __name__ == "__main__":
     unittest.main()

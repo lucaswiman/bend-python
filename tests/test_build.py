@@ -181,6 +181,8 @@ class BuildTests(unittest.TestCase):
         deterministic_handles=False,
         native_cache_probe=False,
         atomic_refcounts=False,
+        constant_heap_threshold=True,
+        native_allocator_probe=False,
     ):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -200,6 +202,11 @@ class BuildTests(unittest.TestCase):
             source = setup.read_text()
             self.assertEqual(source.count("atomic_refcounts=False,"), 1)
             setup.write_text(source.replace("atomic_refcounts=False,", ""))
+        if not constant_heap_threshold:
+            setup = directory / "examples/setup.py"
+            source = setup.read_text()
+            self.assertEqual(source.count("constant_heap_threshold=True,"), 1)
+            setup.write_text(source.replace("constant_heap_threshold=True,", ""))
         if module is not None:
             (directory / "examples/module.bend").write_text(
                 "import Base\nimport ./bend/python.bend as Python\n" + module
@@ -295,6 +302,13 @@ class BuildTests(unittest.TestCase):
                 self.assertEqual(source.count(marker), 1)
                 source = source.replace(marker, replacement)
             shim.write_text(source)
+        if native_allocator_probe:
+            shim = directory / "bend/python.c"
+            shim.write_text(
+                shim.read_text()
+                + "\n"
+                + (ROOT / "tests/fixtures/allocator-threshold.c").read_text()
+            )
         # Build the example project against this checkout's SDK sources.
         result = subprocess.run(
             [sys.executable, "setup.py", "build_ext", "--inplace"],
@@ -311,6 +325,7 @@ class BuildTests(unittest.TestCase):
             self.assertEqual(
                 "      if ((a32_sub_rel(p, 1) & RFC_CNT) != 1) {" in source, atomic_refcounts
             )
+            self.assertEqual("ALC_LEN(e, cls) >= CAP_WORDS" in source, constant_heap_threshold)
         return directory, result
 
     def run_python(self, directory, source):
@@ -538,6 +553,29 @@ assert stats()[3:5] == (0, 0), stats()
                 )
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.run_python(directory, child)
+
+    def test_allocator_threshold_boundaries_banking_and_reallocation(self):
+        child = """
+import ctypes
+import bend_example as module
+probe = ctypes.PyDLL(module.__file__).bendsym_allocator_probe
+probe.argtypes = [ctypes.c_uint32, ctypes.POINTER(ctypes.c_uint64)]
+probe.restype = ctypes.c_int
+for cls in (0, 7, 15, 16):
+    out = (ctypes.c_uint64 * 9)()
+    result = probe(cls, out)
+    assert result == 0, (cls, result, list(out))
+"""
+        for constant in (False, True):
+            for poison in (False, True):
+                with self.subTest(constant_heap_threshold=constant, poison=poison):
+                    flags = os.environ.get("CFLAGS", "") + (" -DBEND_POISON" if poison else "")
+                    with unittest.mock.patch.dict(os.environ, {"CFLAGS": flags}):
+                        directory, result = self.build(
+                            constant_heap_threshold=constant, native_allocator_probe=True
+                        )
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.run_python(directory, child)
 
     def test_cleanup_finalizer_hands_healthy_heap_to_another_thread(self):
         child = (
