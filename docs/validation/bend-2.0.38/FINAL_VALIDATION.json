@@ -1,0 +1,59 @@
+{
+  "status": "PASS_WITH_SKIPS",
+  "scope": "Fresh forced native builds and complete SDK suites after early heap-size cleanup fix, sequential on CPython3.14.3t and3.11.14, Bend2.0.38 Clang14",
+  "source_manifest_sha256": "a2b6323d686bbc225cfc0ee17b37b38a49b35cdec5ef9168a756545a1b711d6a",
+  "source_file_count": 63,
+  "build_py_sha256": "7181c61ea23d84d494e2064f030f2541b6de9a29ac77e861ecb25069d00823f2",
+  "bridge_sha256": "38d8b550865b7252559c045db4504176ea8cbc43ee9a7cc68c88e955b8159f4f",
+  "source_origin_and_both_copies_unchanged": true,
+  "lanes": {
+    "py314t": {
+      "tests": 100,
+      "passed": 84,
+      "skipped": 16,
+      "failures": 0,
+      "source_copy_unchanged": true,
+      "generated_c": "/tmp/bendsym-bend2038-sdk-post-cleanup-py314t/examples/build/temp.linux-x86_64-cpython-314t/bend_example.c",
+      "generated_c_sha256": "51f23a3af04c45db93e48ac45d75ee58c2ea1bff7b8a6cab34fb53075b79cb9c",
+      "early_size_assignment_precedes_initial_layout": true,
+      "growth_size_assignment_retained": true,
+      "receipts": {
+        "proof-script.log": "aa1ad1721f90cd086c7a557e1ff9357225472056dce7076c02236f7873bdfd7a",
+        "ENVIRONMENT.json": "8bae702d7d250d251c589ed1957f2d6ffe28a85fdc74565cbb7af70934fe1181",
+        "proof-script.json": "4eb86a96a8617a2c1bffd96a98580c88f21006d5bdfdac7fdbe8356ca3b58ef1",
+        "suite.json": "3e798575797775abe5e4225042859913d625aa604a99850ec54f1f74d18b3566",
+        "examples-force-build.log": "483d356e0e7d30a4268363bddc1ebfa7626a3515268f6ee3f7003c88ccac529e",
+        "suite.log": "6cb9777c16355423fc5de11ed7cd330928dc4dd3f944ee811b2b66f54bf5fbb9",
+        "examples-force-build.json": "f1629dc9656f8c894c2b95400ad838b067d35d6ea7e26d75a0f871d99f9ce4e6"
+      }
+    },
+    "py311": {
+      "tests": 100,
+      "passed": 81,
+      "skipped": 19,
+      "failures": 0,
+      "source_copy_unchanged": true,
+      "generated_c": "/tmp/bendsym-bend2038-sdk-post-cleanup-py311/examples/build/temp.linux-x86_64-cpython-311/bend_example.c",
+      "generated_c_sha256": "51f23a3af04c45db93e48ac45d75ee58c2ea1bff7b8a6cab34fb53075b79cb9c",
+      "early_size_assignment_precedes_initial_layout": true,
+      "growth_size_assignment_retained": true,
+      "receipts": {
+        "proof-script.log": "aa1ad1721f90cd086c7a557e1ff9357225472056dce7076c02236f7873bdfd7a",
+        "ENVIRONMENT.json": "a3ef1fae28aa87c90ca5d4fee7bf38a508e6273c09307824e133bf454451696c",
+        "proof-script.json": "1f6a1dea1b71c5ed4cb772f01adb36d3749463943472b248a787da5376ec7ae6",
+        "suite.json": "0a5a7748f63b73f27ea7cc184dec1efa4ff2aaa64b3185b6c8292f603c6974c7",
+        "examples-force-build.log": "240b21153638aeab1af4f30f94c2b4bc87715d5bf17ebb118bc6ea5e5087ddba",
+        "suite.log": "67988bb8d2ed95847f5a8286f6f599039faec4623258433776eb06d0d089b007",
+        "examples-force-build.json": "f2a68cea98b12b751dcba835e14cd74cc48cf436b124aefda9426068525f4ac7"
+      }
+    }
+  },
+  "prior_native_artifacts_verified_unchanged": [
+    "/tmp/bendsym-bend2038-sdk/examples/bend_example.cpython-314t-x86_64-linux-gnu.so",
+    "/tmp/bendsym-bend2038-sdk-py311/examples/bend_example.cpython-311-x86_64-linux-gnu.so"
+  ],
+  "trust": "Both pinned proof scripts pass declared71 foreign SDK policy and strict other selected roots. Native tests do not constitute C/FFI proof; initial-layout panic cleanup was statically checked in actual emitted C, not fault-injected.",
+  "optional_scope": "NumPy/SciPy/PyTorch absent:16 integration skips both. Python3.11 additionally skips2free-threading-only tests and1missing _interpreters test.",
+  "all_jobs_terminal": true,
+  "no_shared_source_edits": true
+}

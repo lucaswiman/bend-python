@@ -1,0 +1,92 @@
+{
+  "baseline": {
+    "compiler.stderr.log": {
+      "sha256": "dd01bf00d80457e0ac737944b1baf870c02b95fc01b4f0aebee3c1dba743677e",
+      "utf8": "SOME PROOFS FAIL\nError: 71 defs rely on unsafe or foreign code:\ndefs that depend on foreign effects: python.export, python.require_no_kwargs, python.to_u32, python.from_u32, python.to_f32, python.from_f32, python.to_string, python.from_string, python.to_bool, python.from_bool, python.get_item, python.set_item, python.getattr, python.call, python.invoke, python.identical, python.builtins, python.none, python.empty_dict, python.tuple, python.list, python.len, python.from_nat, python.type_error, python.truthy, python.to_bytes, python.from_bytes, python.import_module, python.construct, python.fill_dict, python.dict, python.require_singleton, python.require_pair, python.unary, python.binary, python.invoke_unary, python.invoke_binary_u32_values, python.invoke_binary_u32, python.export_u32, python.export_f32, python.export_string, python.export_bool, python.export_binary_u32, python.borrow_f32, python.f32_size, python.f32_shape, python.f32_read, python.f32_write, python.f32_modify, python.f32_release, python.f32_map, python.f32_map_closed, python.blas_scale, python.blas_dot, python.blas_axpy, python.blas_matmul, LAWS.singleton_accepted, LAWS.singleton_rejected, LAWS.pair_accepted, LAWS.pair_rejected, tensor.borrow_f32, tensor.require, tensor.require_tensor, tensor.check_forward_ad, tensor.notify_write, tensor.borrow_torch_f32, tensor.map_inplace, tensor.map_object, tensor.invoke_map, tensor.export_numpy_f32_inplace, tensor.export_torch_f32_inplace\n"
+    },
+    "compiler.stdout.log": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "utf8": ""
+    },
+    "integration.stderr.log": {
+      "sha256": "9a55cc844cbf838fbbaf2514f1c5b2dff419cc570c9a465d9868ee4c3c726cf0",
+      "utf8": "bend-python: /tmp/bendsym-bend2038-real-trust-controls-final/baseline/sdk/bend/PROOF.bend: type-checked with declared trust assumptions\nSOME PROOFS FAIL\nError: 71 defs rely on unsafe or foreign code:\ndefs that depend on foreign effects: python.export, python.require_no_kwargs, python.to_u32, python.from_u32, python.to_f32, python.from_f32, python.to_string, python.from_string, python.to_bool, python.from_bool, python.get_item, python.set_item, python.getattr, python.call, python.invoke, python.identical, python.builtins, python.none, python.empty_dict, python.tuple, python.list, python.len, python.from_nat, python.type_error, python.truthy, python.to_bytes, python.from_bytes, python.import_module, python.construct, python.fill_dict, python.dict, python.require_singleton, python.require_pair, python.unary, python.binary, python.invoke_unary, python.invoke_binary_u32_values, python.invoke_binary_u32, python.export_u32, python.export_f32, python.export_string, python.export_bool, python.export_binary_u32, python.borrow_f32, python.f32_size, python.f32_shape, python.f32_read, python.f32_write, python.f32_modify, python.f32_release, python.f32_map, python.f32_map_closed, python.blas_scale, python.blas_dot, python.blas_axpy, python.blas_matmul, LAWS.singleton_accepted, LAWS.singleton_rejected, LAWS.pair_accepted, LAWS.pair_rejected, tensor.borrow_f32, tensor.require, tensor.require_tensor, tensor.check_forward_ad, tensor.notify_write, tensor.borrow_torch_f32, tensor.map_inplace, tensor.map_object, tensor.invoke_map, tensor.export_numpy_f32_inplace, tensor.export_torch_f32_inplace\n"
+    },
+    "integration.stdout.log": {
+      "sha256": "7cbe76111547dec8ebd670d5a9ce2c42c3e6c16e7b853e920f99400e82f340d6",
+      "utf8": "{\"accepted\": true, \"classification\": \"typed_with_declared_trust_boundary\"}\n"
+    }
+  },
+  "wrong_selector": {
+    "compiler.stderr.log": {
+      "sha256": "ab89a4b2993f6c279080364bf8110f763586f414831e33735a0248867d08f2da",
+      "utf8": "SOME PROOFS FAIL\nError:\n- expected : None{}\n- observed : Some{x}\nContext:\n- x : Python.Object\nLocation: Laws.singleton_roundtrip\n22 | def Laws.singleton_roundtrip(x):\n23>|   {==}\n   |   ^^^^\n24 | \n"
+    },
+    "compiler.stdout.log": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "utf8": ""
+    },
+    "integration.stderr.log": {
+      "sha256": "ab89a4b2993f6c279080364bf8110f763586f414831e33735a0248867d08f2da",
+      "utf8": "SOME PROOFS FAIL\nError:\n- expected : None{}\n- observed : Some{x}\nContext:\n- x : Python.Object\nLocation: Laws.singleton_roundtrip\n22 | def Laws.singleton_roundtrip(x):\n23>|   {==}\n   |   ^^^^\n24 | \n"
+    },
+    "integration.stdout.log": {
+      "sha256": "59656703ae3658de07bef8cb88d8a1abd16b672f02f86c134d87ee8cea568a30",
+      "utf8": "{\"accepted\": false, \"exception_type\": \"CompileError\", \"message\": \"Bend proof check failed: /tmp/bendsym-bend2038-real-trust-controls-final/wrong_selector/sdk/bend/PROOF.bend: invalid trust diagnostic count or grammar\", \"cause_type\": \"ValueError\", \"cause\": \"invalid trust diagnostic count or grammar\"}\n"
+    }
+  },
+  "open_law": {
+    "compiler.stderr.log": {
+      "sha256": "712e9dbcf31d51b57fa1390b1630b9fd177626f30d15a2a243dc3191afda729d",
+      "utf8": "SOME PROOFS FAIL\nError: 1 TODO found.\nThe code is incomplete, and not a valid proof yet.\n"
+    },
+    "compiler.stdout.log": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "utf8": ""
+    },
+    "integration.stderr.log": {
+      "sha256": "712e9dbcf31d51b57fa1390b1630b9fd177626f30d15a2a243dc3191afda729d",
+      "utf8": "SOME PROOFS FAIL\nError: 1 TODO found.\nThe code is incomplete, and not a valid proof yet.\n"
+    },
+    "integration.stdout.log": {
+      "sha256": "1e6b7cc2dcd57bec061abb1b2866f6deb52bf17068b535e3211fc49140ce306d",
+      "utf8": "{\"accepted\": false, \"exception_type\": \"CompileError\", \"message\": \"Bend proof check failed: /tmp/bendsym-bend2038-real-trust-controls-final/open_law/sdk/bend/PROOF.bend: invalid trust diagnostic count or grammar\", \"cause_type\": \"ValueError\", \"cause\": \"invalid trust diagnostic count or grammar\"}\n"
+    }
+  },
+  "new_unsafe": {
+    "compiler.stderr.log": {
+      "sha256": "345db055c7338d6cf579daa49ec275d1aaba227a2064ee8d701dbaa7ca2cbf8e",
+      "utf8": "SOME PROOFS FAIL\nError: 72 defs rely on unsafe or foreign code:\ndefs that depend on @unsafe: unreviewed_unsafe\ndefs that depend on foreign effects: python.export, python.require_no_kwargs, python.to_u32, python.from_u32, python.to_f32, python.from_f32, python.to_string, python.from_string, python.to_bool, python.from_bool, python.get_item, python.set_item, python.getattr, python.call, python.invoke, python.identical, python.builtins, python.none, python.empty_dict, python.tuple, python.list, python.len, python.from_nat, python.type_error, python.truthy, python.to_bytes, python.from_bytes, python.import_module, python.construct, python.fill_dict, python.dict, python.require_singleton, python.require_pair, python.unary, python.binary, python.invoke_unary, python.invoke_binary_u32_values, python.invoke_binary_u32, python.export_u32, python.export_f32, python.export_string, python.export_bool, python.export_binary_u32, python.borrow_f32, python.f32_size, python.f32_shape, python.f32_read, python.f32_write, python.f32_modify, python.f32_release, python.f32_map, python.f32_map_closed, python.blas_scale, python.blas_dot, python.blas_axpy, python.blas_matmul, LAWS.singleton_accepted, LAWS.singleton_rejected, LAWS.pair_accepted, LAWS.pair_rejected, tensor.borrow_f32, tensor.require, tensor.require_tensor, tensor.check_forward_ad, tensor.notify_write, tensor.borrow_torch_f32, tensor.map_inplace, tensor.map_object, tensor.invoke_map, tensor.export_numpy_f32_inplace, tensor.export_torch_f32_inplace\n"
+    },
+    "compiler.stdout.log": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "utf8": ""
+    },
+    "integration.stderr.log": {
+      "sha256": "345db055c7338d6cf579daa49ec275d1aaba227a2064ee8d701dbaa7ca2cbf8e",
+      "utf8": "SOME PROOFS FAIL\nError: 72 defs rely on unsafe or foreign code:\ndefs that depend on @unsafe: unreviewed_unsafe\ndefs that depend on foreign effects: python.export, python.require_no_kwargs, python.to_u32, python.from_u32, python.to_f32, python.from_f32, python.to_string, python.from_string, python.to_bool, python.from_bool, python.get_item, python.set_item, python.getattr, python.call, python.invoke, python.identical, python.builtins, python.none, python.empty_dict, python.tuple, python.list, python.len, python.from_nat, python.type_error, python.truthy, python.to_bytes, python.from_bytes, python.import_module, python.construct, python.fill_dict, python.dict, python.require_singleton, python.require_pair, python.unary, python.binary, python.invoke_unary, python.invoke_binary_u32_values, python.invoke_binary_u32, python.export_u32, python.export_f32, python.export_string, python.export_bool, python.export_binary_u32, python.borrow_f32, python.f32_size, python.f32_shape, python.f32_read, python.f32_write, python.f32_modify, python.f32_release, python.f32_map, python.f32_map_closed, python.blas_scale, python.blas_dot, python.blas_axpy, python.blas_matmul, LAWS.singleton_accepted, LAWS.singleton_rejected, LAWS.pair_accepted, LAWS.pair_rejected, tensor.borrow_f32, tensor.require, tensor.require_tensor, tensor.check_forward_ad, tensor.notify_write, tensor.borrow_torch_f32, tensor.map_inplace, tensor.map_object, tensor.invoke_map, tensor.export_numpy_f32_inplace, tensor.export_torch_f32_inplace\n"
+    },
+    "integration.stdout.log": {
+      "sha256": "e5dffa66d047776a6c9c459825e7eea480d6af7418c474a5767ff7bda9033924",
+      "utf8": "{\"accepted\": false, \"exception_type\": \"CompileError\", \"message\": \"Bend proof check failed: /tmp/bendsym-bend2038-real-trust-controls-final/new_unsafe/sdk/bend/PROOF.bend: unreviewed proof trust dependency or diagnostic count\", \"cause_type\": \"ValueError\", \"cause\": \"unreviewed proof trust dependency or diagnostic count\"}\n"
+    }
+  },
+  "new_foreign_wrapper": {
+    "compiler.stderr.log": {
+      "sha256": "d567d54d781feccba3ed2dcccb3992b55b9e1f8bf4eedd8c4135ca1ab137eb40",
+      "utf8": "SOME PROOFS FAIL\nError: 72 defs rely on unsafe or foreign code:\ndefs that depend on foreign effects: python.export, python.require_no_kwargs, python.to_u32, python.from_u32, python.to_f32, python.from_f32, python.to_string, python.from_string, python.to_bool, python.from_bool, python.get_item, python.set_item, python.getattr, python.call, python.invoke, python.identical, python.builtins, python.none, python.empty_dict, python.tuple, python.list, python.len, python.from_nat, python.type_error, python.truthy, python.to_bytes, python.from_bytes, python.import_module, python.construct, python.fill_dict, python.dict, python.require_singleton, python.require_pair, python.unary, python.binary, python.invoke_unary, python.invoke_binary_u32_values, python.invoke_binary_u32, python.export_u32, python.export_f32, python.export_string, python.export_bool, python.export_binary_u32, python.borrow_f32, python.f32_size, python.f32_shape, python.f32_read, python.f32_write, python.f32_modify, python.f32_release, python.f32_map, python.f32_map_closed, python.blas_scale, python.blas_dot, python.blas_axpy, python.blas_matmul, LAWS.singleton_accepted, LAWS.singleton_rejected, LAWS.pair_accepted, LAWS.pair_rejected, tensor.borrow_f32, tensor.require, tensor.require_tensor, tensor.check_forward_ad, tensor.notify_write, tensor.borrow_torch_f32, tensor.map_inplace, tensor.map_object, tensor.invoke_map, tensor.export_numpy_f32_inplace, tensor.export_torch_f32_inplace, unreviewed_wrapper\n"
+    },
+    "compiler.stdout.log": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "utf8": ""
+    },
+    "integration.stderr.log": {
+      "sha256": "d567d54d781feccba3ed2dcccb3992b55b9e1f8bf4eedd8c4135ca1ab137eb40",
+      "utf8": "SOME PROOFS FAIL\nError: 72 defs rely on unsafe or foreign code:\ndefs that depend on foreign effects: python.export, python.require_no_kwargs, python.to_u32, python.from_u32, python.to_f32, python.from_f32, python.to_string, python.from_string, python.to_bool, python.from_bool, python.get_item, python.set_item, python.getattr, python.call, python.invoke, python.identical, python.builtins, python.none, python.empty_dict, python.tuple, python.list, python.len, python.from_nat, python.type_error, python.truthy, python.to_bytes, python.from_bytes, python.import_module, python.construct, python.fill_dict, python.dict, python.require_singleton, python.require_pair, python.unary, python.binary, python.invoke_unary, python.invoke_binary_u32_values, python.invoke_binary_u32, python.export_u32, python.export_f32, python.export_string, python.export_bool, python.export_binary_u32, python.borrow_f32, python.f32_size, python.f32_shape, python.f32_read, python.f32_write, python.f32_modify, python.f32_release, python.f32_map, python.f32_map_closed, python.blas_scale, python.blas_dot, python.blas_axpy, python.blas_matmul, LAWS.singleton_accepted, LAWS.singleton_rejected, LAWS.pair_accepted, LAWS.pair_rejected, tensor.borrow_f32, tensor.require, tensor.require_tensor, tensor.check_forward_ad, tensor.notify_write, tensor.borrow_torch_f32, tensor.map_inplace, tensor.map_object, tensor.invoke_map, tensor.export_numpy_f32_inplace, tensor.export_torch_f32_inplace, unreviewed_wrapper\n"
+    },
+    "integration.stdout.log": {
+      "sha256": "d8789fe03522b1911ec0f5420a3873f476b575de18286eda2df0691238219ac4",
+      "utf8": "{\"accepted\": false, \"exception_type\": \"CompileError\", \"message\": \"Bend proof check failed: /tmp/bendsym-bend2038-real-trust-controls-final/new_foreign_wrapper/sdk/bend/PROOF.bend: unreviewed proof trust dependency or diagnostic count\", \"cause_type\": \"ValueError\", \"cause\": \"unreviewed proof trust dependency or diagnostic count\"}\n"
+    }
+  }
+}

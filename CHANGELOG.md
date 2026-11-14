@@ -5,13 +5,21 @@ All notable changes to `bend-python` are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). A release is published to PyPI only
 when its version has a section below.
 
-## [Unreleased]
+## [0.1.1] - Unreleased
 
 ### Added
 
 - Reproducible NumPy and PyTorch CPU/CUDA numerical benchmarks, with verified
   P-core affinity, congestion gates, synchronized CUDA measurements, and
   per-case correctness, storage identity and memory diagnostics.
+- Optional `BendExtension(..., constant_heap_threshold=True)` specialization for
+  native effects that preserve the initialized CPU allocator policy. It removes
+  one thread-local threshold read while retaining the 32,768-word policy. The
+  default is unchanged and independent of reference-counter specialization.
+- Explicit `BendExtension(..., atomic_refcounts=False)` optimization for trusted
+  native effects that preserve exclusive leased-heap ownership. Atomic counters
+  remain the default; other atomics and Python parallel/reentrant calls are
+  unchanged. The canonical example opts in and existing CI exercises it.
 - An agent skill, `skills/bend-python`, installable with
   `gh skill install lucaswiman/bend-python bend-python`: setup, the build, the
   Python interface and its guarantees, Bend 2's checker rules with fixes, and
@@ -32,6 +40,11 @@ when its version has a section below.
 
 ### Changed
 
+- Pin Bend 2.0.39, including its fix for borrowing read-only lists with native
+  word fields. Retain the checked private C runtime boundary. Proof gates reject
+  type errors and undeclared trust dependencies; effectful SDK laws retain an
+  explicit, exact diagnostic trust set instead of treating the new checker's
+  foreign-effect refusal as strict proof success.
 - Closed-template maps avoid per-element successor objects; both map paths use
   incremental strided traversal with constant storage per axis.
 - Positional Python calls use vectorcall, and native object identity avoids
@@ -73,5 +86,5 @@ when its version has a section below.
   for the typed adapters' argument checks.
 - Linux x86_64 support for CPython 3.10–3.14 and 3.14t.
 
-[Unreleased]: https://github.com/lucaswiman/bend-python/compare/v0.1.0...HEAD
+[0.1.1]: https://github.com/lucaswiman/bend-python/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/lucaswiman/bend-python/releases/tag/v0.1.0

@@ -1,0 +1,359 @@
+{
+  "VALIDATION.json": {
+    "scope": "repeat all5 REAL check_proof integration controls against final raw-bytes API; old packet immutable",
+    "source_manifest": {
+      "path": "/tmp/bendsym-bend2038-real-trust-controls-final/SOURCE.json",
+      "sha256": "b8965e1455d74892469a3367ba5d3c5445637ab600df26911657e97b13ab1124"
+    },
+    "raw_bytes_api": true,
+    "captured_original_result_types": "bytes stdout and bytes stderr for all5 actualBend calls",
+    "observer": "calls real subprocess unchanged, writes raw bytes and returns same CompletedProcess",
+    "frozen_build_py_sha256": "ae114d049e6b3bbe13a4fc9d2c3f29296a187220a3c8d10ed2449f2d53a6abd0",
+    "parser_sha256": "befa42d6c74aab1602723c81aa8fe13b25f1a53bf4c5687f69d77955dca94a4b",
+    "results": {
+      "baseline": {
+        "compiler_exit_code": 1,
+        "integration_accepted": true,
+        "failure_or_acceptance_origin": "exact declared foreign71 boundary accepted; strict CLI itself returns1",
+        "actual_first_compiler_diagnostic": "Error: 71 defs rely on unsafe or foreign code:",
+        "raw_stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "raw_stderr_sha256": "dd01bf00d80457e0ac737944b1baf870c02b95fc01b4f0aebee3c1dba743677e",
+        "raw_streams_byte_equal_original_controls": true,
+        "integration_result": {
+          "path": "/tmp/bendsym-bend2038-real-trust-controls-final/baseline/integration.json",
+          "sha256": "125ecd2d72487dd5582bd4dbb9cb75c4d1efd3458f19989eaa4c86ebdaf1aa34"
+        }
+      },
+      "wrong_selector": {
+        "compiler_exit_code": 1,
+        "integration_accepted": false,
+        "failure_or_acceptance_origin": "Bend equality/type failure before trust verdict",
+        "actual_first_compiler_diagnostic": "Error:",
+        "raw_stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "raw_stderr_sha256": "ab89a4b2993f6c279080364bf8110f763586f414831e33735a0248867d08f2da",
+        "raw_streams_byte_equal_original_controls": true,
+        "integration_result": {
+          "path": "/tmp/bendsym-bend2038-real-trust-controls-final/wrong_selector/integration.json",
+          "sha256": "cb0f77b60aa09045e66a0273b1cfb1296b2e3c3e36b8e20cc120af09666dc614"
+        }
+      },
+      "open_law": {
+        "compiler_exit_code": 1,
+        "integration_accepted": false,
+        "failure_or_acceptance_origin": "Bend open-law/hole failure before trust verdict",
+        "actual_first_compiler_diagnostic": "Error: 1 TODO found.",
+        "raw_stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "raw_stderr_sha256": "712e9dbcf31d51b57fa1390b1630b9fd177626f30d15a2a243dc3191afda729d",
+        "raw_streams_byte_equal_original_controls": true,
+        "integration_result": {
+          "path": "/tmp/bendsym-bend2038-real-trust-controls-final/open_law/integration.json",
+          "sha256": "9fb9db09d53220b69e44bb09836cb2fe56203e9442e1e86390dc319ac7d19ef1"
+        }
+      },
+      "new_unsafe": {
+        "compiler_exit_code": 1,
+        "integration_accepted": false,
+        "failure_or_acceptance_origin": "well-typed actual unsafe definition; newly declared trust label rejected",
+        "actual_first_compiler_diagnostic": "Error: 72 defs rely on unsafe or foreign code:",
+        "raw_stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "raw_stderr_sha256": "345db055c7338d6cf579daa49ec275d1aaba227a2064ee8d701dbaa7ca2cbf8e",
+        "raw_streams_byte_equal_original_controls": true,
+        "integration_result": {
+          "path": "/tmp/bendsym-bend2038-real-trust-controls-final/new_unsafe/integration.json",
+          "sha256": "6cbdd19d485974b2f24f103adf60f75f036ee84928b2bdbfbb8d16c21f286903"
+        }
+      },
+      "new_foreign_wrapper": {
+        "compiler_exit_code": 1,
+        "integration_accepted": false,
+        "failure_or_acceptance_origin": "well-typed actual foreign-dependent wrapper; new foreign label rejected",
+        "actual_first_compiler_diagnostic": "Error: 72 defs rely on unsafe or foreign code:",
+        "raw_stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "raw_stderr_sha256": "d567d54d781feccba3ed2dcccb3992b55b9e1f8bf4eedd8c4135ca1ab137eb40",
+        "raw_streams_byte_equal_original_controls": true,
+        "integration_result": {
+          "path": "/tmp/bendsym-bend2038-real-trust-controls-final/new_foreign_wrapper/integration.json",
+          "sha256": "18ce75a42ebc6d73d12c9ac9555561324a4e1c40d7698d0bd1800176bc50e84d"
+        }
+      }
+    },
+    "unexpected_acceptances": 0,
+    "all_original_LAW_files_unchanged": true,
+    "limits": {
+      "rlimit_as_bytes": 2147483648,
+      "timeout_seconds_each": 600,
+      "one_child_at_a_time": true,
+      "BEND_NO_TELEMETRY": "1"
+    },
+    "shared_source_edits": false,
+    "all_jobs_terminal": true,
+    "scope_qualification": "typed_with_declared_trust_boundary is not pure ALL PROOFS CHECK or BendTT kernel approval"
+  },
+  "SOURCE.json": {
+    "SDK_file_sha256": {
+      "tensor.bend": "7e45c99c7ee55801c6ab9ede3fb8774f65d45e2be76bbf0416965944c6be8a26",
+      "thread_state.bend": "4239337d09c5fc2a2fe924e7d75976e970f5c03ef05a694a28790e60fcea89d4",
+      "blas_shape.bend": "83e1580fe85fe6d057e15039b363c962a3b85fe721d1dc4280c8f3c3e3a615ef",
+      "THREAD_PROOF.bend": "3e6bc7a33a7a676f3b6d9cd651f7632a6df6173316bfc94d886b08939f57e9ac",
+      "python.bend": "ec894b829b975bcefa35eb993543e7f534ea962c4c0604c121e210b9f73d5974",
+      "blas.bend": "ccc75038ab43ac938798db29f008d8c15ca5690223d82fd51d369b787ee35e83",
+      "BLAS_PROOF.bend": "8e6e8ebce194acf8486bad6239565a9db4308ea6d622b57e96fe60df43f52e1f",
+      "LAWS.bend": "60e2072ac7d3b24554716f1a0206b9d95e9f0b47c8debeedbec6fa02f87b20f7",
+      "python.c": "38d8b550865b7252559c045db4504176ea8cbc43ee9a7cc68c88e955b8159f4f",
+      "PROOF.bend": "58c1b6ac95f735f41513cdd5f052d5f3e9826c4c3bb22753812b947d577a18e9",
+      "THREAD_LAWS.bend": "b4ff48e7c8a2dabb498ce05be668590f1b19045b5bb53806f4970b77ec0e9746",
+      "tensor_state.bend": "8c700a6a2629d9802c2a5eba7c79228f1549c7fbd453a77a5f20565321842f24",
+      "TENSOR_LAWS.bend": "51d418dd3f5df8c33410cd5015664adbf1845c537d5da2a6b23237524365d5ae",
+      "BLAS_LAWS.bend": "29308fbaef3c1312df89e351f1f8890eee7aa2b6122c63b3cbba599f354ed003",
+      "TENSOR_PROOF.bend": "47fc99a8639d0976c67c5b380a4043cfcb1add54d788d4bbb62b661cb734c45d"
+    },
+    "integration_files": {
+      "bend_python/__init__.py": "439ab7445c30b301c21e010484c99086a26d75a2de3a4c2f89cd51137d2848b5",
+      "bend_python/library.py": "becaf8e61abed414a252853dc198c9cd81236e0a60c2a1224d69b2108772d406",
+      "bend_python/__main__.py": "24603fcaf3a641f967abfcef56d057decdfd23a65908dcb022a0e76dc1ef2a31",
+      "bend_python/build.py": "ae114d049e6b3bbe13a4fc9d2c3f29296a187220a3c8d10ed2449f2d53a6abd0",
+      "bend_python/proof_trust.py": "befa42d6c74aab1602723c81aa8fe13b25f1a53bf4c5687f69d77955dca94a4b"
+    },
+    "compiler": "/tmp/bendsym-bend2038-toolchain/bend/bin/bend",
+    "compiler_sha256": "98395758bc911af94c15a67bf42d35b6c3e029562c447b4f4a843e3ef6e243f0"
+  },
+  "RESULTS.json": {
+    "baseline": {
+      "case": "baseline",
+      "driver_exit_code": 0,
+      "timed_out": false,
+      "rlimit_as_bytes": 2147483648,
+      "timeout_seconds": 600,
+      "elapsed_seconds": 0.3671400547027588,
+      "source_file_sha256": {
+        "tensor.bend": "7e45c99c7ee55801c6ab9ede3fb8774f65d45e2be76bbf0416965944c6be8a26",
+        "thread_state.bend": "4239337d09c5fc2a2fe924e7d75976e970f5c03ef05a694a28790e60fcea89d4",
+        "blas_shape.bend": "83e1580fe85fe6d057e15039b363c962a3b85fe721d1dc4280c8f3c3e3a615ef",
+        "THREAD_PROOF.bend": "3e6bc7a33a7a676f3b6d9cd651f7632a6df6173316bfc94d886b08939f57e9ac",
+        "python.bend": "ec894b829b975bcefa35eb993543e7f534ea962c4c0604c121e210b9f73d5974",
+        "blas.bend": "ccc75038ab43ac938798db29f008d8c15ca5690223d82fd51d369b787ee35e83",
+        "BLAS_PROOF.bend": "8e6e8ebce194acf8486bad6239565a9db4308ea6d622b57e96fe60df43f52e1f",
+        "LAWS.bend": "60e2072ac7d3b24554716f1a0206b9d95e9f0b47c8debeedbec6fa02f87b20f7",
+        "python.c": "38d8b550865b7252559c045db4504176ea8cbc43ee9a7cc68c88e955b8159f4f",
+        "PROOF.bend": "58c1b6ac95f735f41513cdd5f052d5f3e9826c4c3bb22753812b947d577a18e9",
+        "THREAD_LAWS.bend": "b4ff48e7c8a2dabb498ce05be668590f1b19045b5bb53806f4970b77ec0e9746",
+        "tensor_state.bend": "8c700a6a2629d9802c2a5eba7c79228f1549c7fbd453a77a5f20565321842f24",
+        "TENSOR_LAWS.bend": "51d418dd3f5df8c33410cd5015664adbf1845c537d5da2a6b23237524365d5ae",
+        "BLAS_LAWS.bend": "29308fbaef3c1312df89e351f1f8890eee7aa2b6122c63b3cbba599f354ed003",
+        "TENSOR_PROOF.bend": "47fc99a8639d0976c67c5b380a4043cfcb1add54d788d4bbb62b661cb734c45d"
+      },
+      "all_original_LAW_files_unchanged": true,
+      "expected_acceptance": true,
+      "accepted": true,
+      "classification": "typed_with_declared_trust_boundary",
+      "compiler": {
+        "args": [
+          "/tmp/bendsym-bend2038-toolchain/bend/bin/bend",
+          "/tmp/bendsym-bend2038-real-trust-controls-final/baseline/sdk/bend/PROOF.bend",
+          "--check-only"
+        ],
+        "returncode": 1,
+        "stdout_type": "bytes",
+        "stderr_type": "bytes"
+      },
+      "logs": {
+        "compiler.stdout.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "compiler.stderr.log": "dd01bf00d80457e0ac737944b1baf870c02b95fc01b4f0aebee3c1dba743677e",
+        "integration.stdout.log": "7cbe76111547dec8ebd670d5a9ce2c42c3e6c16e7b853e920f99400e82f340d6",
+        "integration.stderr.log": "9a55cc844cbf838fbbaf2514f1c5b2dff419cc570c9a465d9868ee4c3c726cf0"
+      }
+    },
+    "wrong_selector": {
+      "case": "wrong_selector",
+      "driver_exit_code": 0,
+      "timed_out": false,
+      "rlimit_as_bytes": 2147483648,
+      "timeout_seconds": 600,
+      "elapsed_seconds": 0.41717004776000977,
+      "source_file_sha256": {
+        "tensor.bend": "7e45c99c7ee55801c6ab9ede3fb8774f65d45e2be76bbf0416965944c6be8a26",
+        "thread_state.bend": "4239337d09c5fc2a2fe924e7d75976e970f5c03ef05a694a28790e60fcea89d4",
+        "blas_shape.bend": "83e1580fe85fe6d057e15039b363c962a3b85fe721d1dc4280c8f3c3e3a615ef",
+        "THREAD_PROOF.bend": "3e6bc7a33a7a676f3b6d9cd651f7632a6df6173316bfc94d886b08939f57e9ac",
+        "python.bend": "b168b6056430951d85244ff545bd637243b5c845f89baee69fa0bb6486f85bb7",
+        "blas.bend": "ccc75038ab43ac938798db29f008d8c15ca5690223d82fd51d369b787ee35e83",
+        "BLAS_PROOF.bend": "8e6e8ebce194acf8486bad6239565a9db4308ea6d622b57e96fe60df43f52e1f",
+        "LAWS.bend": "60e2072ac7d3b24554716f1a0206b9d95e9f0b47c8debeedbec6fa02f87b20f7",
+        "python.c": "38d8b550865b7252559c045db4504176ea8cbc43ee9a7cc68c88e955b8159f4f",
+        "PROOF.bend": "58c1b6ac95f735f41513cdd5f052d5f3e9826c4c3bb22753812b947d577a18e9",
+        "THREAD_LAWS.bend": "b4ff48e7c8a2dabb498ce05be668590f1b19045b5bb53806f4970b77ec0e9746",
+        "tensor_state.bend": "8c700a6a2629d9802c2a5eba7c79228f1549c7fbd453a77a5f20565321842f24",
+        "TENSOR_LAWS.bend": "51d418dd3f5df8c33410cd5015664adbf1845c537d5da2a6b23237524365d5ae",
+        "BLAS_LAWS.bend": "29308fbaef3c1312df89e351f1f8890eee7aa2b6122c63b3cbba599f354ed003",
+        "TENSOR_PROOF.bend": "47fc99a8639d0976c67c5b380a4043cfcb1add54d788d4bbb62b661cb734c45d"
+      },
+      "all_original_LAW_files_unchanged": true,
+      "expected_acceptance": false,
+      "accepted": false,
+      "exception_type": "CompileError",
+      "message": "Bend proof check failed: /tmp/bendsym-bend2038-real-trust-controls-final/wrong_selector/sdk/bend/PROOF.bend: invalid trust diagnostic count or grammar",
+      "cause_type": "ValueError",
+      "cause": "invalid trust diagnostic count or grammar",
+      "compiler": {
+        "args": [
+          "/tmp/bendsym-bend2038-toolchain/bend/bin/bend",
+          "/tmp/bendsym-bend2038-real-trust-controls-final/wrong_selector/sdk/bend/PROOF.bend",
+          "--check-only"
+        ],
+        "returncode": 1,
+        "stdout_type": "bytes",
+        "stderr_type": "bytes"
+      },
+      "logs": {
+        "compiler.stdout.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "compiler.stderr.log": "ab89a4b2993f6c279080364bf8110f763586f414831e33735a0248867d08f2da",
+        "integration.stdout.log": "59656703ae3658de07bef8cb88d8a1abd16b672f02f86c134d87ee8cea568a30",
+        "integration.stderr.log": "ab89a4b2993f6c279080364bf8110f763586f414831e33735a0248867d08f2da"
+      }
+    },
+    "open_law": {
+      "case": "open_law",
+      "driver_exit_code": 0,
+      "timed_out": false,
+      "rlimit_as_bytes": 2147483648,
+      "timeout_seconds": 600,
+      "elapsed_seconds": 0.4672994613647461,
+      "source_file_sha256": {
+        "tensor.bend": "7e45c99c7ee55801c6ab9ede3fb8774f65d45e2be76bbf0416965944c6be8a26",
+        "thread_state.bend": "4239337d09c5fc2a2fe924e7d75976e970f5c03ef05a694a28790e60fcea89d4",
+        "blas_shape.bend": "83e1580fe85fe6d057e15039b363c962a3b85fe721d1dc4280c8f3c3e3a615ef",
+        "THREAD_PROOF.bend": "3e6bc7a33a7a676f3b6d9cd651f7632a6df6173316bfc94d886b08939f57e9ac",
+        "python.bend": "ec894b829b975bcefa35eb993543e7f534ea962c4c0604c121e210b9f73d5974",
+        "blas.bend": "ccc75038ab43ac938798db29f008d8c15ca5690223d82fd51d369b787ee35e83",
+        "BLAS_PROOF.bend": "8e6e8ebce194acf8486bad6239565a9db4308ea6d622b57e96fe60df43f52e1f",
+        "LAWS.bend": "60e2072ac7d3b24554716f1a0206b9d95e9f0b47c8debeedbec6fa02f87b20f7",
+        "python.c": "38d8b550865b7252559c045db4504176ea8cbc43ee9a7cc68c88e955b8159f4f",
+        "PROOF.bend": "ab3595b75d814de02194e2b6c3d7bc69a94eec3e79e4ac398ad1cd6aebb99ba0",
+        "THREAD_LAWS.bend": "b4ff48e7c8a2dabb498ce05be668590f1b19045b5bb53806f4970b77ec0e9746",
+        "tensor_state.bend": "8c700a6a2629d9802c2a5eba7c79228f1549c7fbd453a77a5f20565321842f24",
+        "TENSOR_LAWS.bend": "51d418dd3f5df8c33410cd5015664adbf1845c537d5da2a6b23237524365d5ae",
+        "BLAS_LAWS.bend": "29308fbaef3c1312df89e351f1f8890eee7aa2b6122c63b3cbba599f354ed003",
+        "TENSOR_PROOF.bend": "47fc99a8639d0976c67c5b380a4043cfcb1add54d788d4bbb62b661cb734c45d"
+      },
+      "all_original_LAW_files_unchanged": true,
+      "expected_acceptance": false,
+      "accepted": false,
+      "exception_type": "CompileError",
+      "message": "Bend proof check failed: /tmp/bendsym-bend2038-real-trust-controls-final/open_law/sdk/bend/PROOF.bend: invalid trust diagnostic count or grammar",
+      "cause_type": "ValueError",
+      "cause": "invalid trust diagnostic count or grammar",
+      "compiler": {
+        "args": [
+          "/tmp/bendsym-bend2038-toolchain/bend/bin/bend",
+          "/tmp/bendsym-bend2038-real-trust-controls-final/open_law/sdk/bend/PROOF.bend",
+          "--check-only"
+        ],
+        "returncode": 1,
+        "stdout_type": "bytes",
+        "stderr_type": "bytes"
+      },
+      "logs": {
+        "compiler.stdout.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "compiler.stderr.log": "712e9dbcf31d51b57fa1390b1630b9fd177626f30d15a2a243dc3191afda729d",
+        "integration.stdout.log": "1e6b7cc2dcd57bec061abb1b2866f6deb52bf17068b535e3211fc49140ce306d",
+        "integration.stderr.log": "712e9dbcf31d51b57fa1390b1630b9fd177626f30d15a2a243dc3191afda729d"
+      }
+    },
+    "new_unsafe": {
+      "case": "new_unsafe",
+      "driver_exit_code": 0,
+      "timed_out": false,
+      "rlimit_as_bytes": 2147483648,
+      "timeout_seconds": 600,
+      "elapsed_seconds": 0.46721839904785156,
+      "source_file_sha256": {
+        "tensor.bend": "7e45c99c7ee55801c6ab9ede3fb8774f65d45e2be76bbf0416965944c6be8a26",
+        "thread_state.bend": "4239337d09c5fc2a2fe924e7d75976e970f5c03ef05a694a28790e60fcea89d4",
+        "blas_shape.bend": "83e1580fe85fe6d057e15039b363c962a3b85fe721d1dc4280c8f3c3e3a615ef",
+        "THREAD_PROOF.bend": "3e6bc7a33a7a676f3b6d9cd651f7632a6df6173316bfc94d886b08939f57e9ac",
+        "python.bend": "ec894b829b975bcefa35eb993543e7f534ea962c4c0604c121e210b9f73d5974",
+        "blas.bend": "ccc75038ab43ac938798db29f008d8c15ca5690223d82fd51d369b787ee35e83",
+        "BLAS_PROOF.bend": "8e6e8ebce194acf8486bad6239565a9db4308ea6d622b57e96fe60df43f52e1f",
+        "LAWS.bend": "60e2072ac7d3b24554716f1a0206b9d95e9f0b47c8debeedbec6fa02f87b20f7",
+        "python.c": "38d8b550865b7252559c045db4504176ea8cbc43ee9a7cc68c88e955b8159f4f",
+        "PROOF.bend": "93d51448159dfa346cb0976450767c5cdefb6f0d53eccae8fdeb17bbd5f131d3",
+        "THREAD_LAWS.bend": "b4ff48e7c8a2dabb498ce05be668590f1b19045b5bb53806f4970b77ec0e9746",
+        "tensor_state.bend": "8c700a6a2629d9802c2a5eba7c79228f1549c7fbd453a77a5f20565321842f24",
+        "TENSOR_LAWS.bend": "51d418dd3f5df8c33410cd5015664adbf1845c537d5da2a6b23237524365d5ae",
+        "BLAS_LAWS.bend": "29308fbaef3c1312df89e351f1f8890eee7aa2b6122c63b3cbba599f354ed003",
+        "TENSOR_PROOF.bend": "47fc99a8639d0976c67c5b380a4043cfcb1add54d788d4bbb62b661cb734c45d"
+      },
+      "all_original_LAW_files_unchanged": true,
+      "expected_acceptance": false,
+      "accepted": false,
+      "exception_type": "CompileError",
+      "message": "Bend proof check failed: /tmp/bendsym-bend2038-real-trust-controls-final/new_unsafe/sdk/bend/PROOF.bend: unreviewed proof trust dependency or diagnostic count",
+      "cause_type": "ValueError",
+      "cause": "unreviewed proof trust dependency or diagnostic count",
+      "compiler": {
+        "args": [
+          "/tmp/bendsym-bend2038-toolchain/bend/bin/bend",
+          "/tmp/bendsym-bend2038-real-trust-controls-final/new_unsafe/sdk/bend/PROOF.bend",
+          "--check-only"
+        ],
+        "returncode": 1,
+        "stdout_type": "bytes",
+        "stderr_type": "bytes"
+      },
+      "logs": {
+        "compiler.stdout.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "compiler.stderr.log": "345db055c7338d6cf579daa49ec275d1aaba227a2064ee8d701dbaa7ca2cbf8e",
+        "integration.stdout.log": "e5dffa66d047776a6c9c459825e7eea480d6af7418c474a5767ff7bda9033924",
+        "integration.stderr.log": "345db055c7338d6cf579daa49ec275d1aaba227a2064ee8d701dbaa7ca2cbf8e"
+      }
+    },
+    "new_foreign_wrapper": {
+      "case": "new_foreign_wrapper",
+      "driver_exit_code": 0,
+      "timed_out": false,
+      "rlimit_as_bytes": 2147483648,
+      "timeout_seconds": 600,
+      "elapsed_seconds": 0.5176982879638672,
+      "source_file_sha256": {
+        "tensor.bend": "7e45c99c7ee55801c6ab9ede3fb8774f65d45e2be76bbf0416965944c6be8a26",
+        "thread_state.bend": "4239337d09c5fc2a2fe924e7d75976e970f5c03ef05a694a28790e60fcea89d4",
+        "blas_shape.bend": "83e1580fe85fe6d057e15039b363c962a3b85fe721d1dc4280c8f3c3e3a615ef",
+        "THREAD_PROOF.bend": "3e6bc7a33a7a676f3b6d9cd651f7632a6df6173316bfc94d886b08939f57e9ac",
+        "python.bend": "ec894b829b975bcefa35eb993543e7f534ea962c4c0604c121e210b9f73d5974",
+        "blas.bend": "ccc75038ab43ac938798db29f008d8c15ca5690223d82fd51d369b787ee35e83",
+        "BLAS_PROOF.bend": "8e6e8ebce194acf8486bad6239565a9db4308ea6d622b57e96fe60df43f52e1f",
+        "LAWS.bend": "60e2072ac7d3b24554716f1a0206b9d95e9f0b47c8debeedbec6fa02f87b20f7",
+        "python.c": "38d8b550865b7252559c045db4504176ea8cbc43ee9a7cc68c88e955b8159f4f",
+        "PROOF.bend": "eab34fa73abe8c92db43a3f5848c30a085ff2a407b6d87221eccb86d8500fbc2",
+        "THREAD_LAWS.bend": "b4ff48e7c8a2dabb498ce05be668590f1b19045b5bb53806f4970b77ec0e9746",
+        "tensor_state.bend": "8c700a6a2629d9802c2a5eba7c79228f1549c7fbd453a77a5f20565321842f24",
+        "TENSOR_LAWS.bend": "51d418dd3f5df8c33410cd5015664adbf1845c537d5da2a6b23237524365d5ae",
+        "BLAS_LAWS.bend": "29308fbaef3c1312df89e351f1f8890eee7aa2b6122c63b3cbba599f354ed003",
+        "TENSOR_PROOF.bend": "47fc99a8639d0976c67c5b380a4043cfcb1add54d788d4bbb62b661cb734c45d"
+      },
+      "all_original_LAW_files_unchanged": true,
+      "expected_acceptance": false,
+      "accepted": false,
+      "exception_type": "CompileError",
+      "message": "Bend proof check failed: /tmp/bendsym-bend2038-real-trust-controls-final/new_foreign_wrapper/sdk/bend/PROOF.bend: unreviewed proof trust dependency or diagnostic count",
+      "cause_type": "ValueError",
+      "cause": "unreviewed proof trust dependency or diagnostic count",
+      "compiler": {
+        "args": [
+          "/tmp/bendsym-bend2038-toolchain/bend/bin/bend",
+          "/tmp/bendsym-bend2038-real-trust-controls-final/new_foreign_wrapper/sdk/bend/PROOF.bend",
+          "--check-only"
+        ],
+        "returncode": 1,
+        "stdout_type": "bytes",
+        "stderr_type": "bytes"
+      },
+      "logs": {
+        "compiler.stdout.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "compiler.stderr.log": "d567d54d781feccba3ed2dcccb3992b55b9e1f8bf4eedd8c4135ca1ab137eb40",
+        "integration.stdout.log": "d8789fe03522b1911ec0f5420a3873f476b575de18286eda2df0691238219ac4",
+        "integration.stderr.log": "d567d54d781feccba3ed2dcccb3992b55b9e1f8bf4eedd8c4135ca1ab137eb40"
+      }
+    }
+  }
+}
