@@ -5,6 +5,7 @@ import unittest
 
 from setuptools.errors import CompileError
 
+from bend_python import BendExtension
 from bend_python.build import _patch_runtime
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -56,6 +57,51 @@ class RuntimePatchTests(unittest.TestCase):
                 self.assertIn(old, self.source)
                 with self.assertRaises(CompileError):
                     _patch_runtime(self.source.replace(old, new), "fixture.module")
+
+    def test_reference_counter_mode_changes_only_the_two_updates(self):
+        self.assertIs(BendExtension("fixture", "module.bend").bend_atomic_refcounts, True)
+        self.assertIs(
+            BendExtension("fixture", "module.bend", atomic_refcounts=False).bend_atomic_refcounts,
+            False,
+        )
+        with self.assertRaisesRegex(TypeError, "atomic_refcounts must be a bool"):
+            BendExtension("fixture", "module.bend", atomic_refcounts="False")
+
+        default = _patch_runtime(self.source, "fixture.module")
+        self.assertEqual(
+            default, _patch_runtime(self.source, "fixture.module", atomic_refcounts=True)
+        )
+        expected = default.replace(
+            "  u32 c = a32_add(a32_at(e.mem, r), k);",
+            "  DEV u32* p = a32_at(e.mem, r);\n  u32 c = a32_load(p);\n  a32_store(p, c + k);",
+        ).replace(
+            "      if ((a32_sub_rel(p, 1) & RFC_CNT) != 1) {",
+            "      u32 c = a32_load(p);\n"
+            "      a32_store_rel(p, c - 1);\n"
+            "      if ((c & RFC_CNT) != 1) {",
+        )
+        self.assertNotEqual(default, expected)
+        self.assertEqual(
+            expected, _patch_runtime(self.source, "fixture.module", atomic_refcounts=False)
+        )
+
+    def test_changed_reference_counter_sites_are_rejected_when_opted_in(self):
+        for old, new in [
+            (
+                "  u32 c = a32_add(a32_at(e.mem, r), k);",
+                "  u32 c = a32_add(a32_at(e.mem, r), k + 1);",
+            ),
+            (
+                "      if ((a32_sub_rel(p, 1) & RFC_CNT) != 1) {",
+                "      if ((a32_sub_rel(p, 2) & RFC_CNT) != 1) {",
+            ),
+        ]:
+            self.assertEqual(self.source.count(old), 1)
+            for changed in (self.source.replace(old, new), self.source + old):
+                with self.subTest(section=old, changed=changed[-len(old) :]):
+                    _patch_runtime(changed, "fixture.module")
+                    with self.assertRaises(CompileError):
+                        _patch_runtime(changed, "fixture.module", atomic_refcounts=False)
 
     def test_ambiguous_context_and_duplicate_global_are_rejected(self):
         for extra in [

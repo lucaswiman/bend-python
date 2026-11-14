@@ -129,6 +129,46 @@ def stats():
 """
 
 
+RFC_GRAPH_MODULE = """
+def cells(+n: Nat) -> List<&2, U32>:
+  match n:
+    case 0n: []
+    case 1n+k: U32.from_nat(k) <> cells(k)
+
+def total(xs: List<&2, U32>) -> U32:
+  match xs:
+    case []: 0
+    case h<>t: (h + total(t) : U32)
+
+def work(n: U32) -> U32:
+  +xs = cells(U32.to_nat(n))
+  (total(xs) + total(xs) : U32)
+
+def with_graph(+xs: List<&2, U32>, callback: Python.Object) -> IO(Python.Object):
+  do IO<Python.Object>:
+    marker: Python.Object <- Python.from_u32(total(xs))
+    ignored: Python.Object <- Python.invoke(callback, [marker])
+    Python.from_u32((total(xs) + total(xs) : U32))
+
+def graph_values(values: Pair(Python.Object, Python.Object)) -> IO(Python.Object):
+  match values:
+    case (count, callback):
+      do IO<Python.Object>:
+        n: U32 <- Python.to_u32(count)
+        with_graph(cells(U32.to_nat(n)), callback)
+
+def graph(request: Python.Call) -> IO(Python.Object):
+  do IO<Python.Object>:
+    pair: Pair(Python.Object, Python.Object) <- Python.binary(request)
+    graph_values(pair)
+
+def main() -> IO(Unit):
+  do IO<Unit>:
+    Python.export_u32(~(n => work(n)), "work", True{})
+    Python.export("graph", graph, True{})
+"""
+
+
 class BuildTests(unittest.TestCase):
     def build(
         self,
@@ -140,6 +180,7 @@ class BuildTests(unittest.TestCase):
         auto_vendor=False,
         deterministic_handles=False,
         native_cache_probe=False,
+        atomic_refcounts=False,
     ):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -153,6 +194,12 @@ class BuildTests(unittest.TestCase):
             directory / "examples",
             ignore=shutil.ignore_patterns("bend", "*.so", "__pycache__", "build"),
         )
+        if atomic_refcounts:
+            # Omit the example's opt-in to exercise the SDK's default build.
+            setup = directory / "examples/setup.py"
+            source = setup.read_text()
+            self.assertEqual(source.count("atomic_refcounts=False,"), 1)
+            setup.write_text(source.replace("atomic_refcounts=False,", ""))
         if module is not None:
             (directory / "examples/module.bend").write_text(
                 "import Base\nimport ./bend/python.bend as Python\n" + module
@@ -257,6 +304,13 @@ class BuildTests(unittest.TestCase):
             capture_output=True,
             timeout=60,
         )
+        if result.returncode == 0:
+            generated = next((directory / "examples/build").glob("temp.*/bend_example.c"))
+            source = generated.read_text()
+            self.assertEqual("  u32 c = a32_add(a32_at(e.mem, r), k);" in source, atomic_refcounts)
+            self.assertEqual(
+                "      if ((a32_sub_rel(p, 1) & RFC_CNT) != 1) {" in source, atomic_refcounts
+            )
         return directory, result
 
     def run_python(self, directory, source):
@@ -442,6 +496,96 @@ assert stats()[0:2] == (2, 1), stats()
 assert stats()[3:6] == (0, 1, 0), stats()
 """,
         )
+
+    def test_shared_graph_survives_concurrent_reentry_and_callback_failure(self):
+        child = (
+            CACHE_SETUP
+            + """
+import threading
+from concurrent.futures import ThreadPoolExecutor
+barrier = threading.Barrier(2)
+expected_error = ValueError("outer graph callback failed")
+
+def job(n, fail):
+    def callback(checksum):
+        assert checksum == n * (n - 1) // 2
+        barrier.wait(timeout=5)
+        assert module.work(n + 7) == (n + 7) * (n + 6)
+        if fail:
+            raise expected_error
+        return object()
+    try:
+        result = module.graph(n, callback)
+    except ValueError as error:
+        assert fail and error is expected_error
+        return "raised"
+    assert not fail and result == n * (n - 1), result
+    return result
+
+with ThreadPoolExecutor(max_workers=2) as executor:
+    futures = [executor.submit(job, 257, False), executor.submit(job, 513, True)]
+    assert [future.result(timeout=10) for future in futures] == [257 * 256, "raised"]
+assert stats()[3:5] == (0, 0), stats()
+assert module.work(263) == 263 * 262
+assert module.graph(271, lambda checksum: checksum) == 271 * 270
+assert stats()[3:5] == (0, 0), stats()
+"""
+        )
+        for atomic_refcounts in (True, False):
+            with self.subTest(atomic_refcounts=atomic_refcounts):
+                directory, result = self.build(
+                    RFC_GRAPH_MODULE, native_cache_probe=True, atomic_refcounts=atomic_refcounts
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.run_python(directory, child)
+
+    def test_cleanup_finalizer_hands_healthy_heap_to_another_thread(self):
+        child = (
+            CACHE_SETUP
+            + """
+import threading
+from concurrent.futures import ThreadPoolExecutor
+initial = stats()
+assert initial[0:2] == (1, 0) and initial[3] == 0, initial
+completed = threading.Event()
+errors = []
+owner_thread = threading.get_ident()
+
+def other_thread():
+    assert threading.get_ident() != owner_thread
+    result = module.work(389)
+    return result, stats()
+
+with ThreadPoolExecutor(max_workers=1) as executor:
+    class Cleanup:
+        def __del__(self):
+            try:
+                assert stats()[3] == 0, stats()
+                result, during = executor.submit(other_thread).result(timeout=5)
+                assert result == 389 * 388, result
+                assert during[0:3] == initial[0:3], (initial, during)
+                assert during[3] == 0, during
+            except Exception as error:
+                errors.append(error)
+            finally:
+                completed.set()
+    def callback(checksum):
+        assert checksum == 293 * 292 // 2, checksum
+        return Cleanup()
+    assert module.graph(293, callback) == 293 * 292
+    assert completed.wait(timeout=5), "arena finalizer did not execute"
+    if errors:
+        raise errors[0]
+assert stats() == initial, (initial, stats())
+"""
+        )
+        for atomic_refcounts in (True, False):
+            with self.subTest(atomic_refcounts=atomic_refcounts):
+                directory, result = self.build(
+                    RFC_GRAPH_MODULE, native_cache_probe=True, atomic_refcounts=atomic_refcounts
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.run_python(directory, child)
 
     def test_forged_handles_are_rejected(self):
         # With this fixed seed, both forgeries decode outside the arena. Random

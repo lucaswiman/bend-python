@@ -9,6 +9,10 @@ when its version has a section below.
 
 ### Added
 
+- Explicit `BendExtension(..., atomic_refcounts=False)` optimization for trusted
+  native effects that preserve exclusive leased-heap ownership. Atomic counters
+  remain the default; other atomics and Python parallel/reentrant calls are
+  unchanged. The canonical example opts in and existing CI exercises it.
 - An agent skill, `skills/bend-python`, installable with
   `gh skill install lucaswiman/bend-python bend-python`: setup, the build, the
   Python interface and its guarantees, Bend 2's checker rules with fixes, and

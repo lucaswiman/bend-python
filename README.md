@@ -94,6 +94,20 @@ names such as `mypackage._native` work. Ship your `.bend` files in the sdist
 [`examples/`](https://github.com/lucaswiman/bend-python/tree/main/examples) is a
 complete project built this way.
 
+For an extension whose native effects preserve exclusive heap ownership, set
+`atomic_refcounts=False` on `BendExtension` to replace the two private reference
+counter read-modify-write operations with load/update/store. Atomic counters
+remain the default. This option retains atomic loads/stores, memory ordering,
+overflow checks and all other synchronization; it adds no runtime mode switch.
+
+The contract covers native code as well as Bend: one CPU worker per leased heap,
+no retained or cross-thread heap/allocator aliases, and no bypass of the SDK's
+lease driver. Parallel Python calls and callback reentry still use independent
+heaps. The canonical SDK effects satisfy this boundary, and the example opts in.
+Choosing this option does not verify custom foreign C; atomic counters alone do
+not make heap escape supported either. Bend source proofs do not prove this C
+specialization or CPython's implementation.
+
 Bend 2.0.38 reports imported foreign and unsafe definitions as a failed proof
 verdict, even when every filled law type-checks. The SDK permits only its
 recorded foreign dependency set and prints the original diagnostic. Application
