@@ -5,7 +5,9 @@ All notable changes to `bend-python` are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). A release is published to PyPI only
 when its version has a section below.
 
-## [0.1.1] - Unreleased
+## [Unreleased]
+
+## [0.2.0] - 2026-11-13
 
 ### Added
 
@@ -59,7 +61,6 @@ when its version has a section below.
 
 - Proof hooks use the prepared checkout's Python environment unless `PYTHON`
   explicitly selects another interpreter, matching the bootstrap workflow.
-
 - Runtime cache eligibility now measures dynamic heap pages, excluding the
   sparse metadata prefix that previously caused every initialized context to
   be discarded. Large and failed contexts are still evicted.
@@ -90,5 +91,6 @@ when its version has a section below.
   for the typed adapters' argument checks.
 - Linux x86_64 support for CPython 3.10–3.14 and 3.14t.
 
-[0.1.1]: https://github.com/lucaswiman/bend-python/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/lucaswiman/bend-python/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/lucaswiman/bend-python/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/lucaswiman/bend-python/releases/tag/v0.1.0
