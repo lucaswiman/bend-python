@@ -2,6 +2,7 @@
 
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -140,13 +141,17 @@ def total(xs: List<&2, U32>) -> U32:
     case []: 0
     case h<>t: (h + total(t) : U32)
 
+# Force owned sharing even when the compiler correctly borrows total's input.
+def give(xs: List<&2, U32>) -> List<&2, U32>:
+  xs
+
 def work(n: U32) -> U32:
   +xs = cells(U32.to_nat(n))
-  (total(xs) + total(xs) : U32)
+  (total(give(xs)) + total(xs) : U32)
 
 def with_graph(+xs: List<&2, U32>, callback: Python.Object) -> IO(Python.Object):
   do IO<Python.Object>:
-    marker: Python.Object <- Python.from_u32(total(xs))
+    marker: Python.Object <- Python.from_u32(total(give(xs)))
     ignored: Python.Object <- Python.invoke(callback, [marker])
     Python.from_u32((total(xs) + total(xs) : U32))
 
@@ -552,6 +557,13 @@ assert stats()[3:5] == (0, 0), stats()
                     RFC_GRAPH_MODULE, native_cache_probe=True, atomic_refcounts=atomic_refcounts
                 )
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                generated = next((directory / "examples/build").glob("temp.*/bend_example.c"))
+                work = re.findall(
+                    r"  WL_CASE\(FID_work(?:_k\d+)?\)(.*?)(?=\n#endif)",
+                    generated.read_text(),
+                    re.S,
+                )
+                self.assertIn("term_keep(e,", "".join(work))
                 self.run_python(directory, child)
 
     def test_allocator_threshold_boundaries_banking_and_reallocation(self):
@@ -790,7 +802,7 @@ class CompilerDownloadTests(unittest.TestCase):
         release = self.root / "release"
         (release / "bend/bin").mkdir(parents=True)
         executable = release / "bend/bin/bend"
-        executable.write_text("#!/bin/sh\necho 'bend 2.0.38'\n")
+        executable.write_text("#!/bin/sh\necho 'bend 2.0.39'\n")
         executable.chmod(0o755)
         self.archive = self.root / "bend.tar.gz"
         subprocess.run(["tar", "-czf", str(self.archive), "-C", str(release), "bend"], check=True)
@@ -811,8 +823,8 @@ class CompilerDownloadTests(unittest.TestCase):
     def test_download_verifies_extracts_and_caches(self):
         with self.release(self.digest):
             executable = self.build_module._cached_compiler()
-        self.assertEqual(executable, self.cache / "bend-python/bend-2.0.38/bin/bend")
-        self.assertEqual(self.build_module._bend_version(str(executable)), "bend 2.0.38")
+        self.assertEqual(executable, self.cache / "bend-python/bend-2.0.39/bin/bend")
+        self.assertEqual(self.build_module._bend_version(str(executable)), "bend 2.0.39")
         self.archive.unlink()  # A second lookup must not download again.
         with self.release(self.digest):
             self.assertEqual(self.build_module._cached_compiler(), executable)
@@ -830,7 +842,7 @@ class CompilerDownloadTests(unittest.TestCase):
             unittest.mock.patch.dict(os.environ, {"BEND_PYTHON_DOWNLOAD": "0"}),
         ):
             self.assertIsNone(self.build_module._cached_compiler())
-        self.assertFalse((self.cache / "bend-python/bend-2.0.38").exists())
+        self.assertFalse((self.cache / "bend-python/bend-2.0.39").exists())
 
     def test_explicit_bend_must_match_the_pinned_version(self):
         from setuptools.errors import ExecError
