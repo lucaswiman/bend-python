@@ -13,7 +13,7 @@
 
 ```
 myproj/
-  pyproject.toml     # build-system requires setuptools>=80 and bend-python==0.1.0
+  pyproject.toml     # build-system requires setuptools>=80 and bend-python==0.2.0
   setup.py           # BendExtension + BendBuildExt
   LAWS.bend  PROOF.bend
   src/mypkg/__init__.py      # thin Python wrapper
@@ -36,7 +36,7 @@ setup(
 ```toml
 # pyproject.toml
 [build-system]
-requires = ["setuptools>=80", "bend-python==0.1.0"]
+requires = ["setuptools>=80", "bend-python==0.2.0"]
 build-backend = "setuptools.build_meta"
 
 [project]

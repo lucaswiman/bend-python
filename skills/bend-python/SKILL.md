@@ -4,7 +4,7 @@ description: Build and debug Bend 2 CPython extensions with the bend-python SDK,
 license: MIT
 compatibility: Linux x86_64, CPython 3.10-3.14 (and 3.14t), Clang 14+. First build needs PyPI and GitHub release downloads, or BEND set to a Bend 2 executable (tested with 2.0.40).
 metadata:
-  bend-python-version: "0.1.0"
+  bend-python-version: "0.2.0"
   bend-version: "2.0.40"
 ---
 
@@ -34,8 +34,8 @@ Below, `$SKILL` is this skill's directory (the one containing this file) and
 commands run in the project directory.
 
 ```sh
-uv venv -p 3.14 .venv && uv pip install --python .venv/bin/python bend-python==0.1.0 setuptools pytest
-# or: python3 -m venv .venv && .venv/bin/pip install bend-python==0.1.0 setuptools pytest
+uv venv -p 3.14 .venv && uv pip install --python .venv/bin/python bend-python==0.2.0 setuptools pytest
+# or: python3 -m venv .venv && .venv/bin/pip install bend-python==0.2.0 setuptools pytest
 export BEND=$(.venv/bin/python $SKILL/scripts/find_bend.py)   # selected compiler (downloads once)
 $BEND guide                                                     # read before writing Bend
 ```

@@ -8,7 +8,7 @@ exports it to Python (core.bend), LAWS.bend/PROOF.bend, a thin Python wrapper,
 and a test. Then:
 
     cd DIRECTORY
-    python -m venv .venv && .venv/bin/pip install bend-python==0.1.0 setuptools pytest
+    python -m venv .venv && .venv/bin/pip install bend-python==0.2.0 setuptools pytest
     .venv/bin/python -m bend_python vendor src/PACKAGE/bend
     CC=clang .venv/bin/python setup.py build_ext --inplace
     PYTHONPATH=src .venv/bin/python -m pytest
@@ -21,7 +21,7 @@ import sys
 FILES = {
     "pyproject.toml": """\
 [build-system]
-requires = ["setuptools>=80", "bend-python==0.1.0"]
+requires = ["setuptools>=80", "bend-python==0.2.0"]
 build-backend = "setuptools.build_meta"
 
 [project]

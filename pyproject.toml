@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bend-python"
-version = "0.1.0"
+version = "0.2.0"
 description = "Write CPython extensions in Bend 2, with laws proved at build time"
 readme = "README.md"
 requires-python = ">=3.10"

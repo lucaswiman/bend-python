@@ -82,7 +82,7 @@ setup(
 
 ```toml
 [build-system]
-requires = ["setuptools>=80", "bend-python==0.1.0"]
+requires = ["setuptools>=80", "bend-python==0.2.0"]
 build-backend = "setuptools.build_meta"
 ```
 
