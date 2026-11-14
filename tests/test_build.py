@@ -3,6 +3,7 @@
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -10,6 +11,8 @@ import tempfile
 import threading
 import unittest
 import unittest.mock
+
+from bend_python import BEND_VERSION
 
 ROOT = Path(__file__).resolve().parents[1]
 BEND = os.environ.get("BEND", str(ROOT / ".tools/bend/bin/bend"))
@@ -352,6 +355,38 @@ class BuildTests(unittest.TestCase):
         self.assertNotIn("CalledProcessError", output)
         self.assertNotIn("Traceback", output)
 
+    def test_proof_hook_uses_checkout_python_and_honors_override(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            checkout = Path(temporary)
+            for name in ("bend", "examples", "src"):
+                (checkout / name).symlink_to(ROOT / name, target_is_directory=True)
+            (checkout / "scripts").mkdir()
+            script = checkout / "scripts/check-proofs.sh"
+            shutil.copy2(ROOT / "scripts/check-proofs.sh", script)
+            local = checkout / ".venv/bin/python"
+            local.parent.mkdir(parents=True)
+            local.write_text(f'#!/bin/sh\nexec {shlex.quote(sys.executable)} "$@"\n')
+            local.chmod(0o755)
+            system = checkout / "bin/python3"
+            system.parent.mkdir()
+            system.write_text("#!/bin/sh\necho 'selected system Python' >&2\nexit 91\n")
+            system.chmod(0o755)
+            env = {**os.environ, "BEND": BEND, "PATH": f"{system.parent}:{os.environ['PATH']}"}
+            env.pop("PYTHON", None)
+            result = subprocess.run(
+                ["bash", str(script)], env=env, text=True, capture_output=True, timeout=60
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            result = subprocess.run(
+                ["bash", str(script)],
+                env={**env, "PYTHON": str(system)},
+                text=True,
+                capture_output=True,
+                timeout=10,
+            )
+            self.assertEqual(result.returncode, 91, result.stdout + result.stderr)
+            self.assertIn("selected system Python", result.stderr)
+
     def test_false_law_stops_build(self):
         directory, result = self.build(break_proof=True)
         self.assertNotEqual(result.returncode, 0)
@@ -517,8 +552,8 @@ assert stats()[3:6] == (0, 1, 0), stats()
 """,
         )
 
-    def test_shared_graph_survives_concurrent_reentry_and_callback_failure(self):
-        child = (
+    def test_shared_graph_survives_reentry_failure_and_finalizer_handoff(self):
+        reentry = (
             CACHE_SETUP
             + """
 import threading
@@ -551,46 +586,8 @@ assert module.graph(271, lambda checksum: checksum) == 271 * 270
 assert stats()[3:5] == (0, 0), stats()
 """
         )
-        for atomic_refcounts in (True, False):
-            with self.subTest(atomic_refcounts=atomic_refcounts):
-                directory, result = self.build(
-                    RFC_GRAPH_MODULE, native_cache_probe=True, atomic_refcounts=atomic_refcounts
-                )
-                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                generated = next((directory / "examples/build").glob("temp.*/bend_example.c"))
-                work = re.findall(
-                    r"  WL_CASE\(FID_work(?:_k\d+)?\)(.*?)(?=\n#endif)",
-                    generated.read_text(),
-                    re.S,
-                )
-                self.assertIn("term_keep(e,", "".join(work))
-                self.run_python(directory, child)
 
-    def test_allocator_threshold_boundaries_banking_and_reallocation(self):
-        child = """
-import ctypes
-import bend_example as module
-probe = ctypes.PyDLL(module.__file__).bendsym_allocator_probe
-probe.argtypes = [ctypes.c_uint32, ctypes.POINTER(ctypes.c_uint64)]
-probe.restype = ctypes.c_int
-for cls in (0, 7, 15, 16):
-    out = (ctypes.c_uint64 * 9)()
-    result = probe(cls, out)
-    assert result == 0, (cls, result, list(out))
-"""
-        for constant in (False, True):
-            for poison in (False, True):
-                with self.subTest(constant_heap_threshold=constant, poison=poison):
-                    flags = os.environ.get("CFLAGS", "") + (" -DBEND_POISON" if poison else "")
-                    with unittest.mock.patch.dict(os.environ, {"CFLAGS": flags}):
-                        directory, result = self.build(
-                            constant_heap_threshold=constant, native_allocator_probe=True
-                        )
-                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                    self.run_python(directory, child)
-
-    def test_cleanup_finalizer_hands_healthy_heap_to_another_thread(self):
-        child = (
+        finalizer = (
             CACHE_SETUP
             + """
 import threading
@@ -635,7 +632,38 @@ assert stats() == initial, (initial, stats())
                     RFC_GRAPH_MODULE, native_cache_probe=True, atomic_refcounts=atomic_refcounts
                 )
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.run_python(directory, child)
+                generated = next((directory / "examples/build").glob("temp.*/bend_example.c"))
+                work = re.findall(
+                    r"  WL_CASE\(FID_work(?:_k\d+)?\)(.*?)(?=\n#endif)",
+                    generated.read_text(),
+                    re.S,
+                )
+                self.assertIn("term_keep(e,", "".join(work))
+                for scenario, child in (("reentry", reentry), ("finalizer", finalizer)):
+                    with self.subTest(scenario=scenario):
+                        self.run_python(directory, child)
+
+    def test_allocator_threshold_boundaries_banking_and_reallocation(self):
+        child = """
+import ctypes
+import bend_example as module
+probe = ctypes.PyDLL(module.__file__).bendsym_allocator_probe
+probe.argtypes = [ctypes.c_uint32]
+probe.restype = ctypes.c_int
+for cls in (0, 7, 15, 16):
+    result = probe(cls)
+    assert result == 0, (cls, result)
+"""
+        for constant in (False, True):
+            for poison in (False, True):
+                with self.subTest(constant_heap_threshold=constant, poison=poison):
+                    flags = os.environ.get("CFLAGS", "") + (" -DBEND_POISON" if poison else "")
+                    with unittest.mock.patch.dict(os.environ, {"CFLAGS": flags}):
+                        directory, result = self.build(
+                            constant_heap_threshold=constant, native_allocator_probe=True
+                        )
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.run_python(directory, child)
 
     def test_forged_handles_are_rejected(self):
         # With this fixed seed, both forgeries decode outside the arena. Random
@@ -790,7 +818,7 @@ else:
 
 
 class CompilerDownloadTests(unittest.TestCase):
-    """The pinned compiler is fetched, verified, and cached without network access here."""
+    """The default compiler is fetched, verified, and cached without network access here."""
 
     def setUp(self):
         from bend_python import build
@@ -802,7 +830,7 @@ class CompilerDownloadTests(unittest.TestCase):
         release = self.root / "release"
         (release / "bend/bin").mkdir(parents=True)
         executable = release / "bend/bin/bend"
-        executable.write_text("#!/bin/sh\necho 'bend 2.0.39'\n")
+        executable.write_text(f"#!/bin/sh\necho 'bend {BEND_VERSION}'\n")
         executable.chmod(0o755)
         self.archive = self.root / "bend.tar.gz"
         subprocess.run(["tar", "-czf", str(self.archive), "-C", str(release), "bend"], check=True)
@@ -823,8 +851,8 @@ class CompilerDownloadTests(unittest.TestCase):
     def test_download_verifies_extracts_and_caches(self):
         with self.release(self.digest):
             executable = self.build_module._cached_compiler()
-        self.assertEqual(executable, self.cache / "bend-python/bend-2.0.39/bin/bend")
-        self.assertEqual(self.build_module._bend_version(str(executable)), "bend 2.0.39")
+        self.assertEqual(executable, self.cache / f"bend-python/bend-{BEND_VERSION}/bin/bend")
+        self.assertEqual(self.build_module._bend_version(str(executable)), f"bend {BEND_VERSION}")
         self.archive.unlink()  # A second lookup must not download again.
         with self.release(self.digest):
             self.assertEqual(self.build_module._cached_compiler(), executable)
@@ -842,19 +870,28 @@ class CompilerDownloadTests(unittest.TestCase):
             unittest.mock.patch.dict(os.environ, {"BEND_PYTHON_DOWNLOAD": "0"}),
         ):
             self.assertIsNone(self.build_module._cached_compiler())
-        self.assertFalse((self.cache / "bend-python/bend-2.0.39").exists())
+        self.assertFalse((self.cache / f"bend-python/bend-{BEND_VERSION}").exists())
 
-    def test_explicit_bend_must_match_the_pinned_version(self):
+    def test_explicit_compiler_accepts_bend_2_and_checks_version_command(self):
         from setuptools.errors import ExecError
 
-        wrong = self.root / "wrong-bend"
-        wrong.write_text("#!/bin/sh\necho 'bend 2.0.27'\n")
-        wrong.chmod(0o755)
-        with (
-            unittest.mock.patch.dict(os.environ, {"BEND": str(wrong)}),
-            self.assertRaisesRegex(ExecError, "2.0.27"),
+        executable = self.root / "selected-bend"
+        for version, status, accepted in (
+            ("bend 2.0.39", 0, True),
+            ("bend 2.1.0", 0, True),
+            ("bend 1.0.0", 0, False),
+            ("unrelated compiler", 0, False),
+            (f"bend {BEND_VERSION}", 1, False),
         ):
-            self.build_module._compiler()
+            with self.subTest(version=version, status=status):
+                executable.write_text(f"#!/bin/sh\necho '{version}'\nexit {status}\n")
+                executable.chmod(0o755)
+                with unittest.mock.patch.dict(os.environ, {"BEND": str(executable)}):
+                    if accepted:
+                        self.assertEqual(self.build_module._compiler(), str(executable))
+                    else:
+                        with self.assertRaises(ExecError):
+                            self.build_module._compiler()
 
 
 class ParallelBuildTests(unittest.TestCase):

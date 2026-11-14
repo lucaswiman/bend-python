@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Check the library and example proof gates with the pinned Bend compiler.
+# Check the library and example proof gates with the selected Bend 2 compiler.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 bend=${BEND:-.tools/bend/bin/bend}
@@ -7,7 +7,14 @@ if [[ ! -x $bend ]]; then
   echo "Bend not found at $bend; run scripts/bootstrap.sh or set BEND." >&2
   exit 1
 fi
-PYTHONPATH="src${PYTHONPATH:+:$PYTHONPATH}" "${PYTHON:-python3}" - "$bend" <<'PY'
+if [[ -n ${PYTHON:-} ]]; then
+  python=$PYTHON
+elif [[ -x .venv/bin/python ]]; then
+  python=.venv/bin/python
+else
+  python=python3
+fi
+PYTHONPATH="src${PYTHONPATH:+:$PYTHONPATH}" "$python" - "$bend" <<'PY'
 from pathlib import Path
 import os
 import sys

@@ -2,7 +2,8 @@
 
 from .library import get_include, library_path, vendor
 
-BEND_VERSION = "2.0.39"
+# Tested default download; explicitly selected Bend 2 versions are also allowed.
+BEND_VERSION = "2.0.40"
 
 __all__ = [
     "BEND_VERSION",
