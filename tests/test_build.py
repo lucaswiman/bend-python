@@ -12,6 +12,8 @@ import threading
 import unittest
 import unittest.mock
 
+from bend_python import BEND_VERSION
+
 ROOT = Path(__file__).resolve().parents[1]
 BEND = os.environ.get("BEND", str(ROOT / ".tools/bend/bin/bend"))
 
@@ -646,12 +648,11 @@ assert stats() == initial, (initial, stats())
 import ctypes
 import bend_example as module
 probe = ctypes.PyDLL(module.__file__).bendsym_allocator_probe
-probe.argtypes = [ctypes.c_uint32, ctypes.POINTER(ctypes.c_uint64)]
+probe.argtypes = [ctypes.c_uint32]
 probe.restype = ctypes.c_int
 for cls in (0, 7, 15, 16):
-    out = (ctypes.c_uint64 * 9)()
-    result = probe(cls, out)
-    assert result == 0, (cls, result, list(out))
+    result = probe(cls)
+    assert result == 0, (cls, result)
 """
         for constant in (False, True):
             for poison in (False, True):
@@ -817,7 +818,7 @@ else:
 
 
 class CompilerDownloadTests(unittest.TestCase):
-    """The pinned compiler is fetched, verified, and cached without network access here."""
+    """The default compiler is fetched, verified, and cached without network access here."""
 
     def setUp(self):
         from bend_python import build
@@ -829,7 +830,7 @@ class CompilerDownloadTests(unittest.TestCase):
         release = self.root / "release"
         (release / "bend/bin").mkdir(parents=True)
         executable = release / "bend/bin/bend"
-        executable.write_text("#!/bin/sh\necho 'bend 2.0.39'\n")
+        executable.write_text(f"#!/bin/sh\necho 'bend {BEND_VERSION}'\n")
         executable.chmod(0o755)
         self.archive = self.root / "bend.tar.gz"
         subprocess.run(["tar", "-czf", str(self.archive), "-C", str(release), "bend"], check=True)
@@ -850,8 +851,8 @@ class CompilerDownloadTests(unittest.TestCase):
     def test_download_verifies_extracts_and_caches(self):
         with self.release(self.digest):
             executable = self.build_module._cached_compiler()
-        self.assertEqual(executable, self.cache / "bend-python/bend-2.0.39/bin/bend")
-        self.assertEqual(self.build_module._bend_version(str(executable)), "bend 2.0.39")
+        self.assertEqual(executable, self.cache / f"bend-python/bend-{BEND_VERSION}/bin/bend")
+        self.assertEqual(self.build_module._bend_version(str(executable)), f"bend {BEND_VERSION}")
         self.archive.unlink()  # A second lookup must not download again.
         with self.release(self.digest):
             self.assertEqual(self.build_module._cached_compiler(), executable)
@@ -869,19 +870,28 @@ class CompilerDownloadTests(unittest.TestCase):
             unittest.mock.patch.dict(os.environ, {"BEND_PYTHON_DOWNLOAD": "0"}),
         ):
             self.assertIsNone(self.build_module._cached_compiler())
-        self.assertFalse((self.cache / "bend-python/bend-2.0.39").exists())
+        self.assertFalse((self.cache / f"bend-python/bend-{BEND_VERSION}").exists())
 
-    def test_explicit_bend_must_match_the_pinned_version(self):
+    def test_explicit_compiler_accepts_bend_2_and_checks_version_command(self):
         from setuptools.errors import ExecError
 
-        wrong = self.root / "wrong-bend"
-        wrong.write_text("#!/bin/sh\necho 'bend 2.0.27'\n")
-        wrong.chmod(0o755)
-        with (
-            unittest.mock.patch.dict(os.environ, {"BEND": str(wrong)}),
-            self.assertRaisesRegex(ExecError, "2.0.27"),
+        executable = self.root / "selected-bend"
+        for version, status, accepted in (
+            ("bend 2.0.39", 0, True),
+            ("bend 2.1.0", 0, True),
+            ("bend 1.0.0", 0, False),
+            ("unrelated compiler", 0, False),
+            (f"bend {BEND_VERSION}", 1, False),
         ):
-            self.build_module._compiler()
+            with self.subTest(version=version, status=status):
+                executable.write_text(f"#!/bin/sh\necho '{version}'\nexit {status}\n")
+                executable.chmod(0o755)
+                with unittest.mock.patch.dict(os.environ, {"BEND": str(executable)}):
+                    if accepted:
+                        self.assertEqual(self.build_module._compiler(), str(executable))
+                    else:
+                        with self.assertRaises(ExecError):
+                            self.build_module._compiler()
 
 
 class ParallelBuildTests(unittest.TestCase):

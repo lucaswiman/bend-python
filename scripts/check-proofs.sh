@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Check the library and example proof gates with the pinned Bend compiler.
+# Check the library and example proof gates with the selected Bend 2 compiler.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 bend=${BEND:-.tools/bend/bin/bend}

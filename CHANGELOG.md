@@ -37,8 +37,9 @@ when its version has a section below.
 
 ### Changed
 
-- Pin Bend 2.0.39, including its fix for borrowing read-only lists with native
-  word fields. Retain the checked private C runtime boundary. Proof gates reject
+- Test with Bend 2.0.40 and use its checksum-verified release by default.
+  Explicit `BEND` and PATH compilers may use other Bend 2 versions; proof and
+  runtime-source compatibility gates still apply. Proof gates reject
   type errors and undeclared trust dependencies; effectful SDK laws retain an
   explicit, exact diagnostic trust set instead of treating the new checker's
   foreign-effect refusal as strict proof success.

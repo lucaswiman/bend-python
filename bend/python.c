@@ -1,6 +1,6 @@
-// CPython and private Bend 2.0.38 runtime boundary. Every invocation exclusively
+// CPython and private Bend runtime boundary, tested with 2.0.40. Every invocation exclusively
 // owns a runtime instance; the generated runtime selects it through bp_current.
-// The build relocates this block before the pinned runtime's first state use.
+// The build relocates this block before the runtime's first state use.
 // BENDPY_RUNTIME_CONTEXT_BEGIN
 #include <setjmp.h>
 typedef struct BpRuntime {
